@@ -17,13 +17,31 @@ pub struct MediaDirs {
 }
 
 impl MediaDirs {
-    /// Scan the KakaoTalk container once for direct 40-hex media account dirs.
+    /// Scan every KakaoTalk store root once for direct 40-hex media account
+    /// dirs, merging what each root holds — an install that changed roots keeps
+    /// serving already-downloaded media from the abandoned one.
     ///
-    /// This is intentionally bounded to one directory level. A missing or
-    /// unreadable container is an error; an empty media-dir set is a valid
-    /// cache state and simply makes lookups miss.
+    /// This is intentionally bounded to one directory level. Having no store
+    /// root at all is an error; an empty media-dir set is a valid cache state
+    /// and simply makes lookups miss.
     pub fn discover(home: &Path) -> Result<Self> {
-        Self::discover_in_container(&auth::container_dir(home))
+        let present: Vec<PathBuf> = super::store::store_dirs(home)
+            .into_iter()
+            .filter(|dir| dir.is_dir())
+            .collect();
+        let Some((first, rest)) = present.split_first() else {
+            return Err(Error::Kakao(format!(
+                "kakao media container not found: {}",
+                auth::container_dir(home).display()
+            )));
+        };
+        let mut merged = Self::discover_in_container(first)?;
+        for dir in rest {
+            merged.roots.extend(Self::discover_in_container(dir)?.roots);
+        }
+        merged.roots.sort();
+        merged.roots.dedup();
+        Ok(merged)
     }
 
     pub fn discover_in_container(container: &Path) -> Result<Self> {

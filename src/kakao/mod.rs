@@ -18,6 +18,7 @@ pub mod media_resolver;
 pub mod reader;
 #[cfg(all(target_os = "macos", feature = "private-send"))]
 pub mod send_curtain;
+pub mod store;
 
 use std::path::PathBuf;
 

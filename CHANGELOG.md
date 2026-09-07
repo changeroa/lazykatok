@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Source
+
+- Discover KakaoTalk databases in both store roots — the app-sandbox container
+  and `Library/Application Support` — instead of the container alone, keeping
+  the most recently modified copy of each filename. An install whose store moved
+  between the two roots leaves an abandoned copy behind under the same filename;
+  reading that copy made every room look as if it had stopped receiving messages
+  on the day of the move. Media lookups now scan both roots as well.
+
 ### Rebrand
 
 - Renamed the product to `lazykatok`: crate and binary name, Formula, setup
