@@ -1,7 +1,7 @@
 //! KakaoTalk media-cache path helpers.
 //!
 //! Media files live below 40-hex account directories in the KakaoTalk macOS
-//! container. Each chat room is a SHA-1 of the reversed chat id, and each media
+//! store roots. Each chat room is a SHA-1 of the reversed chat id, and each media
 //! filename stem is a SHA-1 of the reversed KakaoTalk media key string.
 
 use std::path::{Path, PathBuf};
@@ -21,23 +21,36 @@ impl MediaDirs {
     /// dirs, merging what each root holds — an install that changed roots keeps
     /// serving already-downloaded media from the abandoned one.
     ///
-    /// This is intentionally bounded to one directory level. Having no store
-    /// root at all is an error; an empty media-dir set is a valid cache state
-    /// and simply makes lookups miss.
+    /// This is intentionally bounded to one directory level. An unreadable
+    /// root is skipped if another root can be scanned. Having no readable store
+    /// root is an error; a readable empty root is a valid cache state.
     pub fn discover(home: &Path) -> Result<Self> {
         let present: Vec<PathBuf> = super::store::store_dirs(home)
             .into_iter()
             .filter(|dir| dir.is_dir())
             .collect();
-        let Some((first, rest)) = present.split_first() else {
+        if present.is_empty() {
             return Err(Error::Kakao(format!(
                 "kakao media container not found: {}",
                 auth::container_dir(home).display()
             )));
-        };
-        let mut merged = Self::discover_in_container(first)?;
-        for dir in rest {
-            merged.roots.extend(Self::discover_in_container(dir)?.roots);
+        }
+        let mut merged = Self { roots: Vec::new() };
+        let mut scanned_any = false;
+        let mut scan_error = None;
+        for dir in present {
+            match Self::discover_in_container(&dir) {
+                Ok(found) => {
+                    scanned_any = true;
+                    merged.roots.extend(found.roots);
+                }
+                Err(error) => scan_error = Some(error),
+            }
+        }
+        if let Some(error) = scan_error {
+            if !scanned_any {
+                return Err(error);
+            }
         }
         merged.roots.sort();
         merged.roots.dedup();
@@ -149,6 +162,101 @@ fn sha1_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovers_media_from_both_store_roots() {
+        let home = tempfile::tempdir().expect("temp home");
+        let mut expected = Vec::new();
+        for dir in super::super::store::store_dirs(home.path()) {
+            let account = dir.join("a".repeat(40));
+            std::fs::create_dir_all(&account).expect("create media account");
+            expected.push(account);
+        }
+        expected.sort();
+        assert_eq!(
+            MediaDirs::discover(home.path()).expect("discover").roots(),
+            expected
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_store_does_not_hide_media_in_the_other_root() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().expect("temp home");
+        let dirs = super::super::store::store_dirs(home.path());
+        for dir in &dirs {
+            std::fs::create_dir_all(dir).expect("create store root");
+        }
+        // Exercise both scan orders: the failure can precede or follow success.
+        for unreadable_index in 0..dirs.len() {
+            let unreadable = &dirs[unreadable_index];
+            let readable = &dirs[1 - unreadable_index];
+            let account = readable.join("a".repeat(40));
+            let chat_dir = account.join(chat_media_dir_name(42));
+            std::fs::create_dir_all(&chat_dir).expect("create chat dir");
+            let media = chat_dir.join("test.img");
+            std::fs::write(&media, b"synthetic media").expect("write media");
+            let permissions = std::fs::metadata(unreadable)
+                .expect("metadata")
+                .permissions();
+            std::fs::set_permissions(unreadable, std::fs::Permissions::from_mode(0o111))
+                .expect("remove read permission");
+            let scan_error = std::fs::read_dir(unreadable).err();
+            let found = MediaDirs::discover(home.path());
+            // Restore permissions before assertions so temporary fixtures can be removed.
+            std::fs::set_permissions(unreadable, permissions).expect("restore permissions");
+            assert_eq!(
+                scan_error
+                    .expect("test requires an unprivileged user")
+                    .kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+            let found = found.expect("readable root must remain usable");
+            assert_eq!(found.roots(), std::slice::from_ref(&account));
+            assert_eq!(found.find_media_file(42, "test", ".img"), Some(media));
+            std::fs::remove_dir_all(account).expect("remove account fixture");
+        }
+    }
+
+    #[test]
+    fn no_store_is_an_error_but_a_readable_empty_store_is_valid() {
+        let home = tempfile::tempdir().expect("temp home");
+        assert!(MediaDirs::discover(home.path()).is_err());
+        std::fs::create_dir_all(super::super::store::app_support_dir(home.path()))
+            .expect("create empty store");
+        assert!(MediaDirs::discover(home.path())
+            .expect("empty store")
+            .roots()
+            .is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_only_store_is_an_error_but_readable_empty_peer_is_valid() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().expect("temp home");
+        let unreadable = super::super::store::app_support_dir(home.path());
+        std::fs::create_dir_all(&unreadable).expect("create store");
+        let permissions = std::fs::metadata(&unreadable)
+            .expect("metadata")
+            .permissions();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o111))
+            .expect("remove read permission");
+        let only_unreadable = MediaDirs::discover(home.path());
+        let peer = super::super::store::container_dir(home.path());
+        let create_peer = std::fs::create_dir_all(peer);
+        let with_empty_peer = MediaDirs::discover(home.path());
+        std::fs::set_permissions(&unreadable, permissions).expect("restore permissions");
+        create_peer.expect("create readable empty store");
+        assert!(only_unreadable.is_err());
+        assert!(with_empty_peer
+            .expect("readable empty peer")
+            .roots()
+            .is_empty());
+    }
 
     #[test]
     fn sha1_rev_matches_python_reference() {

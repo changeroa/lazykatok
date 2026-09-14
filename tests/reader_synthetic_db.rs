@@ -13,6 +13,63 @@ use rusqlite::Connection;
 const TEST_UUID: &str = "00000000-1111-2222-3333-444444444444";
 const TEST_USER_ID: i64 = 1_000_000_001;
 
+#[test]
+fn reads_committed_wal_updates_instead_of_an_equal_mtime_abandoned_copy() {
+    use lazykatok::kakao::store;
+    use std::time::{Duration, SystemTime};
+
+    let home = tempfile::tempdir().expect("temp home");
+    let inside = store::container_dir(home.path());
+    let outside = store::app_support_dir(home.path());
+    std::fs::create_dir_all(&inside).expect("inside root");
+    std::fs::create_dir_all(&outside).expect("outside root");
+    let name = derive::database_name(TEST_USER_ID, TEST_UUID);
+    let live = inside.join(&name);
+    let stale = outside.join(&name);
+    let key = derive::secure_key(TEST_USER_ID, TEST_UUID);
+    let conn = open_with_schema(&live, &key);
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA wal_autocheckpoint=0;
+         INSERT INTO NTChatRoom(chatId, chatName) VALUES (100, 'Synthetic room');
+         PRAGMA wal_checkpoint(TRUNCATE);",
+    )
+    .expect("checkpoint initial schema and room");
+    std::fs::copy(&live, &stale).expect("copy checkpointed database");
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+    for path in [&live, &stale] {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("open fixture")
+            .set_modified(old)
+            .expect("equal database mtimes");
+    }
+    conn.execute_batch(
+        "INSERT INTO NTChatMessage(chatId, logId, type, message, sentAt)
+         VALUES (100, 99, 1, 'Synthetic WAL message', 1700000000);",
+    )
+    .expect("commit message to wal");
+    assert_eq!(
+        std::fs::metadata(&live)
+            .expect("live metadata")
+            .modified()
+            .expect("mtime"),
+        old
+    );
+    let options = AuthOptions {
+        home: home.path().to_path_buf(),
+        data_dir: home.path().join("data"),
+        user_id_override: Some(TEST_USER_ID),
+        uuid_override: Some(TEST_UUID.to_string()),
+        max_user_id: 0,
+    };
+    // Keep the writer open so closing it cannot checkpoint away the regression.
+    let output = lazykatok::kakao::read_kakao_with_options(&options).expect("read live database");
+    assert_eq!(output.messages.len(), 1);
+    assert_eq!(output.messages[0].message_id, "100-99");
+}
+
 /// Open a writable SQLCipher DB with the reader's exact open recipe and create
 /// the KakaoTalk schema. Returns the opened connection for further inserts.
 fn open_with_schema(path: &Path, key: &str) -> Connection {

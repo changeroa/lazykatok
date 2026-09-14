@@ -6,7 +6,8 @@
 //! filename, frozen at the moment of the move — and a reader that knows only
 //! the old root keeps decrypting that twin, so every room appears to have
 //! stopped talking on moving day while the app carries on normally. Scan both
-//! roots and let the most recently modified copy of each filename win.
+//! roots and let the most recently modified copy of each filename win,
+//! including committed changes that are still in its WAL.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -58,8 +59,9 @@ pub fn discover_database_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Database files across every store root, keeping only the most recently
-/// modified copy of each filename. A file whose mtime cannot be read is treated
-/// as the oldest possible, so a readable copy always outranks it.
+/// modified copy of each filename, including its nonempty `-wal` sidecar.
+/// Commits can advance the WAL without modifying the main file. Empty WALs
+/// and `-shm` files do not indicate newer database content.
 pub fn discover_databases(home: &Path) -> Vec<PathBuf> {
     let mut newest: HashMap<String, (SystemTime, PathBuf)> = HashMap::new();
     for dir in store_dirs(home) {
@@ -67,9 +69,7 @@ pub fn discover_databases(home: &Path) -> Vec<PathBuf> {
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-            let modified = std::fs::metadata(&path)
-                .and_then(|meta| meta.modified())
-                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let modified = database_modified(&path);
             match newest.entry(name.to_string()) {
                 Entry::Occupied(mut slot) => {
                     if modified > slot.get().0 {
@@ -85,6 +85,21 @@ pub fn discover_databases(home: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = newest.into_values().map(|(_, path)| path).collect();
     files.sort();
     files
+}
+
+fn database_modified(path: &Path) -> SystemTime {
+    let modified = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    // Append rather than replace the extension: both <name>-wal and
+    // <name>.db-wal are valid SQLite sidecar names.
+    let mut wal = path.as_os_str().to_os_string();
+    wal.push("-wal");
+    let wal_modified = std::fs::metadata(Path::new(&wal))
+        .ok()
+        .filter(|meta| meta.is_file() && meta.len() > 0)
+        .and_then(|meta| meta.modified().ok());
+    wal_modified.map_or(modified, |wal_modified| modified.max(wal_modified))
 }
 
 fn is_hex_db_name(name: &str) -> bool {
@@ -166,6 +181,46 @@ mod tests {
         let home = tempfile::tempdir().expect("temp home");
         let name = db_name();
         write_db(&app_support_dir(home.path()), &name, 1_000);
+        let live = write_db(&container_dir(home.path()), &name, 2_000);
+        assert_eq!(discover_databases(home.path()), vec![live]);
+    }
+
+    #[test]
+    fn newer_wal_wins_in_either_root_with_either_db_suffix() {
+        for suffix in ["", ".db"] {
+            for live_inside in [false, true] {
+                let home = tempfile::tempdir().expect("temp home");
+                let inside = container_dir(home.path());
+                let outside = app_support_dir(home.path());
+                let (live_dir, stale_dir) = if live_inside {
+                    (&inside, &outside)
+                } else {
+                    (&outside, &inside)
+                };
+                let name = format!("{}{suffix}", db_name());
+                let live = write_db(live_dir, &name, 1_000);
+                write_db(stale_dir, &name, 2_000);
+                let wal = write_db(live_dir, &format!("{name}-wal"), 3_000);
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&wal)
+                    .expect("open wal");
+                file.set_len(32).expect("nonempty wal");
+                file.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(3_000))
+                    .expect("set wal mtime");
+                assert_eq!(discover_databases(home.path()), vec![live]);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_wal_and_newer_shm_do_not_make_an_abandoned_db_live() {
+        let home = tempfile::tempdir().expect("temp home");
+        let name = db_name();
+        let stale_dir = app_support_dir(home.path());
+        write_db(&stale_dir, &name, 1_000);
+        write_db(&stale_dir, &format!("{name}-wal"), 3_000);
+        write_db(&stale_dir, &format!("{name}-shm"), 3_000);
         let live = write_db(&container_dir(home.path()), &name, 2_000);
         assert_eq!(discover_databases(home.path()), vec![live]);
     }
