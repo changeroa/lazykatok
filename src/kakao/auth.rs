@@ -21,6 +21,10 @@ use super::derive;
 use super::reader::probe_database;
 use crate::{Error, Result};
 
+pub use super::store::{
+    app_support_dir, container_dir, discover_database_files, discover_databases,
+};
+
 const EMPTY_ACCOUNT_HASH: &str = "31bca02094eb78126a517b206a88c73cfa9ec6f704c7030d18212cace820f025\
 f00bf0ea68dbf3f3a5436ca63b53bf7bf80ad8d5de7d8359d0b7fed9dbc3ab99";
 const DIRECT_USER_ID_KEYS: [&str; 4] = ["userId", "user_id", "KAKAO_USER_ID", "userID"];
@@ -38,11 +42,12 @@ fn is_lower_hex(b: u8) -> bool {
 /// decrypts a database, runs the SHA-512 recovery, or reads message content.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ProbeStatus {
-    /// The KakaoTalk macOS preference plist(s) or container exist.
+    /// The KakaoTalk macOS preference plist(s) or a store root exist.
     pub app_installed: bool,
-    /// The encrypted-DB container directory is present.
+    /// At least one encrypted-DB store root is present.
     pub container_present: bool,
-    /// Count of `^[0-9a-f]{78}(?:\.db)?$` database files in the container.
+    /// Count of `^[0-9a-f]{78}(?:\.db)?$` database files across the store
+    /// roots, counting a filename present in both roots once.
     pub db_file_count: usize,
     /// The katok `{user_id, uuid}` auth cache file exists.
     pub auth_cached: bool,
@@ -52,13 +57,10 @@ pub struct ProbeStatus {
 /// inspects filesystem/plist presence and whether the katok auth cache exists;
 /// it never decrypts, never runs SHA-512 recovery, and never reads messages.
 pub fn probe_status(home: &Path, data_dir: &Path) -> ProbeStatus {
-    let container = container_dir(home);
-    let container_present = container.is_dir();
-    let db_file_count = if container_present {
-        discover_database_files(&container).len()
-    } else {
-        0
-    };
+    let container_present = super::store::store_dirs(home)
+        .iter()
+        .any(|dir| dir.is_dir());
+    let db_file_count = discover_databases(home).len();
     let app_installed = !preference_paths(home).is_empty() || container_present;
     let auth_cached = katok_cache_path(data_dir).is_file();
     ProbeStatus {
@@ -105,16 +107,6 @@ impl AuthOptions {
     }
 }
 
-pub fn container_dir(home: &Path) -> PathBuf {
-    home.join("Library")
-        .join("Containers")
-        .join("com.kakao.KakaoTalkMac")
-        .join("Data")
-        .join("Library")
-        .join("Application Support")
-        .join("com.kakao.KakaoTalkMac")
-}
-
 fn katok_cache_path(data_dir: &Path) -> PathBuf {
     data_dir.join("kakao").join("auth.json")
 }
@@ -157,35 +149,6 @@ fn preference_paths(home: &Path) -> Vec<PathBuf> {
         paths.push(global);
     }
     paths
-}
-
-/// DB files in the container dir matching `^[0-9a-f]{78}(?:\.db)?$`.
-pub fn discover_database_files(container: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = match std::fs::read_dir(container) {
-        Ok(entries) => entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(is_hex_db_name)
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    };
-    files.sort();
-    files
-}
-
-fn is_hex_db_name(name: &str) -> bool {
-    // Mirror the reference HEX_DATABASE_PATTERN `^[0-9a-f]{78}(?:\.db)?$`: accept
-    // an optional trailing ".db" before the 78-lowercase-hex check.
-    let stem = name.strip_suffix(".db").unwrap_or(name);
-    stem.len() == 78
-        && stem
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn platform_uuid() -> Result<String> {
@@ -463,11 +426,10 @@ fn verify(user_id: i64, uuid: &str, database_files: &[PathBuf]) -> Option<Vec<Pa
 
 /// Resolve and verify auth following the documented precedence chain.
 pub fn resolve_auth(options: &AuthOptions) -> Result<ResolvedAuth> {
-    let container = container_dir(&options.home);
-    let database_files = discover_database_files(&container);
+    let database_files = discover_databases(&options.home);
     if database_files.is_empty() {
         return Err(Error::Kakao(
-            "no KakaoTalk database files found in the container directory".to_string(),
+            "no KakaoTalk database files found in any store directory".to_string(),
         ));
     }
 
@@ -591,35 +553,6 @@ mod tests {
             super::super::hex_for_test(&digest)
         };
         assert_eq!(recover_user_id_from_sha512(&target, 10_000), Some(4242));
-    }
-
-    #[test]
-    fn hex_db_name_requires_lowercase_78() {
-        assert!(is_hex_db_name(&"a".repeat(78)));
-        assert!(!is_hex_db_name(&"a".repeat(77)));
-        assert!(!is_hex_db_name(&"A".repeat(78)));
-        assert!(!is_hex_db_name(&"g".repeat(78)));
-    }
-
-    #[test]
-    fn hex_db_name_accepts_optional_db_suffix() {
-        // Reference HEX_DATABASE_PATTERN `^[0-9a-f]{78}(?:\.db)?$`.
-        assert!(is_hex_db_name(&format!("{}.db", "a".repeat(78))));
-        // Wrong stem length even with the suffix is still rejected.
-        assert!(!is_hex_db_name(&format!("{}.db", "a".repeat(77))));
-        // A bare ".db" or other suffixes (-wal/-shm) are not databases.
-        assert!(!is_hex_db_name(".db"));
-        assert!(!is_hex_db_name(&format!("{}-wal", "a".repeat(78))));
-    }
-
-    #[test]
-    fn discovers_db_suffixed_file() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let stem = "a".repeat(78);
-        let suffixed = dir.path().join(format!("{stem}.db"));
-        std::fs::write(&suffixed, b"x").expect("write db file");
-        let found = discover_database_files(dir.path());
-        assert_eq!(found, vec![suffixed]);
     }
 
     #[test]
