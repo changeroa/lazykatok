@@ -120,5 +120,4 @@ python3 scripts/verify_release_config.py
 
 ## 라이선스
 
-MIT. 이 프로젝트는 [NomaDamas/katok](https://github.com/NomaDamas/katok)을 포크해
-리브랜딩한 개인 빌드입니다.
+MIT. 이 프로젝트는 개인적으로만 사용 가능하고 사용 책임은 본인에게 있습니다. 타인에게 공유하거나 상업적 사용을 하지마세요.
