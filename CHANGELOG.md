@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Semantic search
+
+- Added an OpenAI-compatible HTTP embedder. Set `KATOK_EMBED_URL` (or
+  `LAZYKATOK_EMBED_URL`, or `embedder_url` in `katok.toml`) to index and search
+  against any `POST /v1/embeddings` server, including models whose dimension
+  differs from the built-in 768 — set `KATOK_EMBED_DIM` (or `vector_dimension`)
+  to match. `KATOK_EMBED_MODEL` selects the model name and records vectors under
+  an `openai/<model>` id; `KATOK_EMBED_API_KEY` (or `embedder_api_key_env`) adds
+  a bearer token, and `query_prefix`/`passage_prefix` can be prepended per side.
+  Applied only when configured: the local `fastembed` default is unchanged.
+- `lazykatok doctor --json` now reports the effective embedder `provider`,
+  `mode`, `model`, `dimension`, and `endpoint` after environment overrides.
+- The local `fastembed` cache now resolves to a writable directory
+  (`KATOK_FASTEMBED_CACHE_DIR`, else the platform cache dir under
+  `lazykatok/fastembed`) instead of a relative `.fastembed_cache`, which failed
+  with `EROFS` when the process working directory was `/`.
+
 ### Source
 
 - Discover KakaoTalk databases in both store roots — the app-sandbox container

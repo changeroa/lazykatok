@@ -17,6 +17,8 @@ pub(crate) fn run(
     semantic_dir: &Path,
     _data_dir: &Path,
 ) -> Result<()> {
+    let config = config.with_env_overrides();
+    let config = &config;
     if !archive_path.is_file() {
         anyhow::bail!("archive is missing; run katok sync before katok index");
     }
