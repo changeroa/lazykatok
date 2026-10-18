@@ -32,6 +32,7 @@ katok source chats --source macos --json  # lists rooms with their chat ids
 katok search keyword "검색어" --json
 katok search bm25 "검색어" --json
 katok search semantic "지난 회의 보고서" --json
+katok search hybrid "지난 회의 보고서" --json   # BM25 + semantic, fused over parent windows
 katok chunk get <chunk-id> --json
 katok chunk get <chunk-id> --redact --json
 katok chunk context <chunk-id> --json
@@ -67,7 +68,7 @@ environment variable; setting one is silently ignored and the run writes into th
 4. Inspect the `freshness` section from `doctor --json` before search.
 5. Run `katok sync --source macos --json` when `freshness.recommendation.sync_before_search` is `true`, when the user asks for recent messages, or when search freshness matters.
 6. Run `katok index --json` before semantic search when `freshness.recommendation.index_before_semantic_search` is `true` or after a sync that should affect vector search.
-7. Use `katok search keyword ...`, `katok search bm25 ...`, and `katok search semantic ...` for discovery.
+7. Use `katok search keyword ...`, `katok search bm25 ...`, `katok search semantic ...`, and `katok search hybrid ...` for discovery.
    - A search returns a global top-k across rooms (default 10). For a person or topic that may occur across many rooms, raise `--limit` (for example 100) and group the returned hits by the stable `chat_id`; a room outside the first 10 is not an engine omission.
 8. Use `katok chunk get ...` only for explicit retrieval.
 9. Run `katok doctor --macos-probe --json` only for setup or permission diagnostics, because it may trigger a macOS "access data from other apps" prompt.
@@ -93,7 +94,9 @@ asks to send or stage a message.
 
 `--source macos` reads the live macOS KakaoTalk SQLCipher database locally in Rust; the terminal must have Full Disk Access to `~/Library/Containers/com.kakao.KakaoTalkMac/`.
 
-Use `katok chunk context <chunk-id> --json` to inspect the immediate previous and next micro chunks in the same chat. Use `katok chunk parent <chunk-id> --json` to jump from a micro chunk to its larger 5-minute same-chat window parent chunk. Semantic search returns parent-window hits with `child_chunk_ids`; use these chunk commands to navigate from broad context back to exact messages.
+Use `katok chunk context <chunk-id> --json` to inspect the immediate previous and next micro chunks in the same chat. Use `katok chunk parent <chunk-id> --json` to jump from a micro chunk to its larger 5-minute same-chat window parent chunk. Semantic and hybrid search return parent-window hits with `child_chunk_ids`; use these chunk commands to navigate from broad context back to exact messages.
+
+`katok search hybrid` fuses the BM25 and semantic rankings with reciprocal rank fusion (k=60). BM25 ranks micro chunks and semantic search ranks parent windows, so each BM25 chunk is counted as a hit on the window(s) containing it before fusion; a window holding several matching chunks counts once, at its best chunk's rank. Each input contributes `3 × --limit` candidates. Hits are parent windows (`unit: parent_window`, `ranker: hybrid`), like semantic search. It needs a current semantic index and fails with the semantic search error (`semantic_index_missing`, `semantic_index_stale`, ...) rather than falling back to keyword-only hits.
 
 `katok index` runs the local `embeddinggemma-300m-q4` embedder in-process by default. Do not ask the user to start a Python, Jina, TEI, or local HTTP embedding server. Use `KATOK_EMBEDDER=mock` only for synthetic QA and `KATOK_EMBEDDER=local-test` only when you need deterministic local vector tests without downloading the model.
 

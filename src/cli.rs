@@ -293,6 +293,15 @@ pub(crate) enum SearchCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Fuse BM25 and semantic rankings (reciprocal rank fusion) into parent-window hits.
+    Hybrid {
+        query: String,
+        /// Maximum number of results to return.
+        #[arg(long, default_value_t = 10, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100_000))]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]

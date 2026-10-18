@@ -19,6 +19,7 @@ use lazykatok::{
         rebuild_chunks_for_chats, rebuild_chunks_with_settings, ChunkSettings, CHUNKER_VERSION,
     },
     config::KatokConfig,
+    hybrid::hybrid_search_with_config,
     search::{bm25_search_with_snippet, keyword_search_with_snippet},
     semantic::semantic_search_live_with_config,
     transcript::export_transcript,
@@ -557,7 +558,8 @@ pub(crate) fn command_requests_json(command: &Commands) -> bool {
         Commands::Search { command } => match command {
             SearchCommand::Keyword { json, .. }
             | SearchCommand::Bm25 { json, .. }
-            | SearchCommand::Semantic { json, .. } => *json,
+            | SearchCommand::Semantic { json, .. }
+            | SearchCommand::Hybrid { json, .. } => *json,
         },
         Commands::Chunk { command } => match command {
             crate::cli::ChunkCommand::Get { json, .. }
@@ -2854,6 +2856,22 @@ fn run_search(
                     config,
                 ))
                 .context("semantic search")?;
+            print_payload(json, &hits)
+        }
+        SearchCommand::Hybrid { query, limit, json } => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("create semantic runtime")?;
+            let hits = runtime
+                .block_on(hybrid_search_with_config(
+                    &archive,
+                    semantic_dir,
+                    &query,
+                    limit,
+                    config,
+                ))
+                .context("hybrid search")?;
             print_payload(json, &hits)
         }
     }

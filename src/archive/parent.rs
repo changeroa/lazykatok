@@ -74,7 +74,7 @@ impl Archive {
         Ok(parents)
     }
 
-    pub(super) fn window_parent_ids(&self, chunk_id: &str) -> Result<Vec<String>> {
+    pub fn window_parent_ids(&self, chunk_id: &str) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
             .prepare(

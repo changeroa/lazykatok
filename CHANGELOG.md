@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Search
+
+- Added `search hybrid`, which fuses the BM25 and semantic rankings with
+  reciprocal rank fusion (k=60). BM25 ranks micro chunks while the semantic
+  index ranks the parent windows that contain them, so each BM25 chunk is
+  counted as a hit on its parent window(s) before fusion; hits are parent
+  windows, as in `search semantic`. It requires a current semantic index and
+  reports the semantic search error instead of falling back to keyword-only hits.
+
 ### Source
 
 - Discover KakaoTalk databases in both store roots — the app-sandbox container

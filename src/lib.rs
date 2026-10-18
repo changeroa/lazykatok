@@ -3,6 +3,7 @@ pub mod archive;
 pub mod chunking;
 pub mod config;
 pub mod fixture;
+pub mod hybrid;
 pub mod kakao;
 pub mod paths;
 pub mod search;

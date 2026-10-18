@@ -44,6 +44,12 @@ pub fn bm25_search_with_snippet(
     limit: usize,
     snippet_length: usize,
 ) -> Result<Vec<SearchHit>> {
+    let ids = bm25_chunk_ids(archive, query, limit)?;
+    hydrate_hits(archive, ids, "bm25", query, snippet_length)
+}
+
+/// Chunk ids matching `query`, best BM25 match first.
+pub(crate) fn bm25_chunk_ids(archive: &Archive, query: &str, limit: usize) -> Result<Vec<String>> {
     if query.trim().is_empty() {
         return Err(Error::EmptyQuery);
     }
@@ -66,7 +72,7 @@ pub fn bm25_search_with_snippet(
         .map_err(Error::Sql)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Error::Sql)?;
-    hydrate_hits(archive, ids, "bm25", query, snippet_length)
+    Ok(ids)
 }
 
 fn literal_fts_query(query: &str) -> String {
