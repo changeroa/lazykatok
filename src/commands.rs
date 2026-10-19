@@ -1919,6 +1919,16 @@ fn run_doctor(
     semantic_dir: PathBuf,
 ) -> Result<()> {
     let macos_probe = macos_probe_payload(macos_probe_enabled, &data_dir);
+    // `provider` names the backend the indexer will pick; the deterministic test
+    // embedders still resolve locally, so only the HTTP backend reports differently.
+    let embedder_provider = match config.embedder_family() {
+        "openai-compatible" => "openai-compatible",
+        _ => "local",
+    };
+    let embedder_mode = config.embedder_provider.clone();
+    let embedder_endpoint = config.embedder_url.clone();
+    let embedder_model = config.embedder_model.clone();
+    let embedder_dimension = config.vector_dimension;
     let payload = serde_json::json!({
         "name": "lazykatok",
         "command": "lazykatok",
@@ -1938,11 +1948,11 @@ fn run_doctor(
             "status": if archive_path.exists() { "present" } else { "missing" }
         },
         "embedder": {
-            "model": config.embedder_model,
-            "dimension": config.vector_dimension,
-            "provider": "local",
-            "mode": std::env::var("KATOK_EMBEDDER").unwrap_or_else(|_| "local".to_string()),
-            "endpoint": null
+            "model": embedder_model,
+            "dimension": embedder_dimension,
+            "provider": embedder_provider,
+            "mode": embedder_mode,
+            "endpoint": embedder_endpoint
         }
     });
     print_payload(json, &payload)

@@ -25,7 +25,7 @@ pub struct SemanticIndexReport {
     pub written_documents: usize,
     pub embedding_calls: usize,
     pub embedded_texts: usize,
-    pub embedder: &'static str,
+    pub embedder: String,
     pub vectorstore: &'static str,
     pub semantic_units: &'static str,
     pub archive_revision: String,
@@ -63,6 +63,7 @@ pub async fn index_semantic_live_for_parents(
     config: &KatokConfig,
     full: bool,
 ) -> Result<SemanticIndexReport> {
+    let config = &config.with_env_overrides();
     crate::paths::ensure_private_dir(root)?;
     crate::paths::ensure_private_dir(&root.join(GENERATIONS_DIR))?;
     let _writer = IndexWriterGuard::acquire(root)?;
@@ -149,7 +150,7 @@ pub async fn index_semantic_live_for_parents(
         written_documents: written,
         embedding_calls,
         embedded_texts,
-        embedder: embedder.id(),
+        embedder: embedder.id().to_string(),
         vectorstore: "local",
         semantic_units: "parent_windows",
         archive_revision: revision,
@@ -166,6 +167,7 @@ pub async fn semantic_search_live_with_config(
     limit: usize,
     config: &KatokConfig,
 ) -> Result<Vec<SearchHit>> {
+    let config = &config.with_env_overrides();
     if query.trim().is_empty() {
         return Err(Error::EmptyQuery);
     }

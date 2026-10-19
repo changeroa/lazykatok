@@ -38,7 +38,9 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let config = KatokConfig::load(cli.config.as_deref()).context("load config")?;
+    let config = KatokConfig::load(cli.config.as_deref())
+        .context("load config")?
+        .with_env_overrides();
     let data_dir = match cli.data_dir {
         Some(path) => path,
         None => default_data_dir().context("resolve default data directory")?,

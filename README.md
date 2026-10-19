@@ -65,6 +65,27 @@ lazykatok search keyword <질의> --json
 lazykatok transcript --chat <chat_id> --from 2026-08-01 --to 2026-08-31 --out export.md
 ```
 
+## 임베딩 백엔드
+
+의미 검색 인덱싱의 기본값은 로컬 `fastembed`(`embeddinggemma-300m-q4`, 768차원)
+입니다. 외부 OpenAI 호환 임베딩 서버(OpenAI, llama.cpp, Ollama, vLLM, TEI 등)를
+쓰려면 엔드포인트를 지정하세요. `KATOK_*`와 `LAZYKATOK_*` 접두사를 모두 인정합니다.
+
+| 환경 변수 | 의미 |
+| --- | --- |
+| `KATOK_EMBED_URL` | 엔드포인트 URL. 설정하면 `openai-compatible` 백엔드가 선택됩니다. |
+| `KATOK_EMBED_MODEL` | 요청에 보낼 모델 이름 (`openai/<model>` ID로 기록) |
+| `KATOK_EMBED_DIM` | 벡터 차원 (예: `Qwen3-Embedding-0.6B`는 `1024`) |
+| `KATOK_EMBED_API_KEY` | 보낼 `Authorization: Bearer` 토큰 |
+| `KATOK_EMBEDDER` | 백엔드 선택: `local` · `mock` · `local-test` · `openai-compatible` · `http` |
+
+URL은 `/embeddings`로 끝나면 그대로, `/v1`로 끝나면 `/embeddings`를, 그 외에는
+`/v1/embeddings`를 붙여 호출합니다. 같은 설정을 `--config katok.toml`의
+`embedder_url`(별칭 `embedder_endpoint`) · `embedder_model` · `vector_dimension` ·
+`embedder_api_key_env` · `query_prefix` · `passage_prefix`로도 지정할 수 있습니다.
+로컬 모델 캐시는 `KATOK_FASTEMBED_CACHE_DIR`, 없으면 플랫폼 캐시 디렉터리의
+`lazykatok/fastembed`를 사용합니다.
+
 ## TUI 사용법
 
 방 목록은 마지막 메시지 시각이 오래된 방부터 위에서 아래로 정렬되고 번호는 아래가
@@ -103,8 +124,10 @@ lazykatok transcript --chat <chat_id> --from 2026-08-01 --to 2026-08-31 --out ex
 
 - 모든 대화 데이터는 로컬(`~/Library/Application Support/katok` — 이전 이름의
   디렉터리를 그대로 사용) SQLCipher 암호화 아카이브에 저장됩니다.
-- 텔레메트리가 없고, 대화 내용이 네트워크로 전송되지 않습니다. 의미 검색의
-  임베딩도 로컬 모델로 계산됩니다.
+- 텔레메트리가 없습니다. 의미 검색의 임베딩은 기본적으로 로컬 모델로
+  계산됩니다. `KATOK_EMBED_URL`(또는 설정 파일의 `embedder_url`)로 OpenAI 호환
+  엔드포인트를 직접 지정한 경우에만 인덱싱할 문단과 검색어가 그 엔드포인트로
+  전송됩니다.
 - 이 저장소는 공개입니다. 실제 대화에서 유래한 어떤 값도 커밋되지 않으며,
   테스트는 합성 fixture만 사용합니다 (`scripts/verify_release_config.py`의
   프라이버시 오라클이 이를 계속 검사합니다).
