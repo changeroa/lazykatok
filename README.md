@@ -62,6 +62,7 @@ lazykatok semantic "언제 만나기로 했지"  # 의미 검색
 ```bash
 lazykatok watch --select --reply --accept-use-policy --source macos
 lazykatok search keyword <질의> --json
+lazykatok search hybrid <질의> --json    # BM25 + 의미 검색을 RRF로 결합 (부모 윈도우 단위)
 lazykatok transcript --chat <chat_id> --from 2026-08-01 --to 2026-08-31 --out export.md
 ```
 

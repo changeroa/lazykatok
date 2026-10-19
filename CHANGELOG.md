@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.3
+
 ### Semantic search
 
 - Added an OpenAI-compatible HTTP embedder. Set `KATOK_EMBED_URL` (or
@@ -18,6 +20,15 @@
   (`KATOK_FASTEMBED_CACHE_DIR`, else the platform cache dir under
   `lazykatok/fastembed`) instead of a relative `.fastembed_cache`, which failed
   with `EROFS` when the process working directory was `/`.
+
+### Search
+
+- Added `search hybrid`, which fuses the BM25 and semantic rankings with
+  reciprocal rank fusion (k=60). BM25 ranks micro chunks while the semantic
+  index ranks the parent windows that contain them, so each BM25 chunk is
+  counted as a hit on its parent window(s) before fusion; hits are parent
+  windows, as in `search semantic`. It requires a current semantic index and
+  reports the semantic search error instead of falling back to keyword-only hits.
 
 ### Source
 
