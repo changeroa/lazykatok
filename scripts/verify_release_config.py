@@ -143,9 +143,9 @@ def main() -> int:
             "Release workflow runs only on v* tags",
         ),
         check(
-            "crates-token",
-            "CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}" in release,
-            "Release workflow uses Cargo's crates.io token environment variable",
+            "no-crates-publish",
+            "cargo publish\n" not in release and "CARGO_REGISTRY_TOKEN" not in release,
+            "Release workflow does not publish to crates.io; distribution is GitHub release and Homebrew tap",
         ),
         check(
             "homebrew-tap",
