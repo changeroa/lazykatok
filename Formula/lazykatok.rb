@@ -1,9 +1,9 @@
 class Lazykatok < Formula
-  desc "LazyKatok: local-first KakaoTalk terminal client for Apple Silicon macOS"
+  desc "Local KakaoTalk keyword, BM25, and vector search CLI for Apple Silicon macOS"
   homepage "https://github.com/changeroa/lazykatok"
   url "https://github.com/changeroa/lazykatok.git",
-    tag:      "v0.3.2",
-    revision: "4b23475efaa3a65c393542cf8799ef9e51af5c1a"
+    tag:      "v0.3.3",
+    revision: "f6908d10730625808f6fdd58000355a6b39d2284"
   license "MIT"
 
   depends_on "rust" => :build
