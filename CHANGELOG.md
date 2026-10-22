@@ -12,6 +12,8 @@
   new or edited instead of every message in the source, so a busy room no longer
   costs a full archive pass per poll. The archive's sync cursor never moves
   backwards as a result of syncing an edit to an older message.
+- The store key and database name are derived once per account instead of
+  three times per read; each derivation is 100k PBKDF2 rounds.
 
 ## 0.3.3
 
