@@ -2334,3 +2334,29 @@ fn a_deleted_message_leaves_the_archive_chunks_and_index() {
 
     assert_archive_invariants(&conn, 2);
 }
+
+#[test]
+fn syncing_only_an_edit_to_an_old_message_keeps_the_cursor_at_the_newest_message() {
+    let messages = fixture_messages();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("archive.sqlite3");
+    let archive = Archive::open(&path).expect("open archive");
+    archive.sync_messages(&messages).expect("initial sync");
+    let conn = Connection::open(&path).expect("open sqlite");
+    let cursor = || -> String {
+        conn.query_row("SELECT cursor_value FROM sync_cursors", [], |r| r.get(0))
+            .expect("one cursor")
+    };
+    let newest = cursor();
+
+    let mut edited = messages
+        .iter()
+        .min_by_key(|m| m.timestamp)
+        .expect("fixture has messages")
+        .clone();
+    edited.text.push_str(" (edited)");
+    let report = archive.sync_messages(&[edited]).expect("edit sync");
+
+    assert_eq!(report.updated_messages, 1);
+    assert_eq!(cursor(), newest);
+}
