@@ -1,6 +1,7 @@
 use crate::types::RawMessage;
 use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -645,6 +646,10 @@ pub struct WatchSnapshot {
     initialized: bool,
     source_changed: bool,
     fingerprints: BTreeMap<MessageKey, MessageFingerprint>,
+    /// Indexes, into the slice last passed to `diff`, of the messages that
+    /// were new or changed in any chat. `None` after the first diff, when the
+    /// whole slice is new to the archive.
+    archive_changes: Option<Vec<usize>>,
 }
 
 impl WatchSnapshot {
@@ -658,11 +663,15 @@ impl WatchSnapshot {
         let initial = !self.initialized;
         let mut next = BTreeMap::new();
         let mut changed = Vec::new();
+        let mut archive_changes = Vec::new();
 
-        for message in messages {
+        for (index, message) in messages.iter().enumerate() {
             let key = MessageKey::from(message);
             let fingerprint = MessageFingerprint::from(message);
             let previous = self.fingerprints.get(&key);
+            if previous != Some(&fingerprint) {
+                archive_changes.push(index);
+            }
             next.insert(key, fingerprint.clone());
 
             if chat_filter.is_some_and(|chat_id| chat_id != message.chat_id.as_str()) {
@@ -684,6 +693,7 @@ impl WatchSnapshot {
         self.source_changed = initial || self.fingerprints != next;
         self.fingerprints = next;
         self.initialized = true;
+        self.archive_changes = (!initial).then_some(archive_changes);
 
         changed.sort_by(|left, right| left.0.cmp(&right.0));
         changed
@@ -695,6 +705,27 @@ impl WatchSnapshot {
                 message,
             })
             .collect()
+    }
+
+    /// Record a poll that skipped reading because the source was untouched.
+    pub fn unchanged(&mut self) {
+        self.source_changed = false;
+        self.archive_changes = Some(Vec::new());
+    }
+
+    /// The messages from the last `diff` that the archive has not stored yet:
+    /// all of them on the first diff, then only those new or changed since.
+    /// Upserting every message on each change cost seconds on large accounts.
+    pub fn archive_batch<'a>(&self, messages: &'a [RawMessage]) -> Cow<'a, [RawMessage]> {
+        match &self.archive_changes {
+            None => Cow::Borrowed(messages),
+            Some(indexes) => Cow::Owned(
+                indexes
+                    .iter()
+                    .map(|&index| messages[index].clone())
+                    .collect(),
+            ),
+        }
     }
 
     pub fn seen_count(&self) -> usize {
@@ -841,6 +872,46 @@ mod tests {
                 WatchEvent::State { .. } => None,
             })
             .collect()
+    }
+
+    fn batch_ids(snapshot: &WatchSnapshot, messages: &[RawMessage]) -> Vec<String> {
+        snapshot
+            .archive_batch(messages)
+            .iter()
+            .map(|message| message.message_id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn archive_batch_holds_every_message_first_then_only_changes_in_any_chat() {
+        let mut snapshot = WatchSnapshot::default();
+        let first = vec![message("a", "1", 1, "one"), message("b", "2", 2, "two")];
+        snapshot.diff(&first, 1, false, Some("a"));
+        assert_eq!(batch_ids(&snapshot, &first), vec!["1", "2"]);
+
+        snapshot.diff(&first, 2, false, Some("a"));
+        assert!(batch_ids(&snapshot, &first).is_empty());
+
+        // An edit and an insert outside the filtered chat still reach the archive.
+        let next = vec![
+            message("a", "1", 1, "one"),
+            message("b", "2", 2, "two edited"),
+            message("b", "3", 3, "three"),
+        ];
+        snapshot.diff(&next, 3, false, Some("a"));
+        assert!(snapshot.source_changed());
+        assert_eq!(batch_ids(&snapshot, &next), vec!["2", "3"]);
+    }
+
+    #[test]
+    fn an_unchanged_poll_leaves_nothing_to_archive() {
+        let mut snapshot = WatchSnapshot::default();
+        let messages = vec![message("a", "1", 1, "one")];
+        snapshot.diff(&messages, 1, false, None);
+        snapshot.unchanged();
+        assert!(!snapshot.source_changed());
+        assert!(batch_ids(&snapshot, &messages).is_empty());
+        assert_eq!(snapshot.seen_count(), 1);
     }
 
     #[test]

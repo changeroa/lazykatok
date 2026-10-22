@@ -87,15 +87,45 @@ pub fn discover_databases(home: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn database_modified(path: &Path) -> SystemTime {
-    let modified = std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH);
+/// Length and modification time of one file, `None` when it does not exist.
+pub type FileStamp = Option<(u64, SystemTime)>;
+
+/// The discovered databases with the stamp of each file and of its `-wal`
+/// sidecar. A commit always lands in one of the two, so equal stamps taken
+/// before two reads mean the second read would decrypt the same content.
+/// `-shm` is left out on purpose: readers write it, so including it would
+/// make every read look like a change.
+pub type StoreStamp = Vec<(PathBuf, FileStamp, FileStamp)>;
+
+pub fn store_stamp(home: &Path) -> StoreStamp {
+    discover_databases(home)
+        .into_iter()
+        .map(|path| {
+            let db = file_stamp(&path);
+            let wal = file_stamp(&wal_path(&path));
+            (path, db, wal)
+        })
+        .collect()
+}
+
+fn file_stamp(path: &Path) -> FileStamp {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
+fn wal_path(path: &Path) -> PathBuf {
     // Append rather than replace the extension: both <name>-wal and
     // <name>.db-wal are valid SQLite sidecar names.
     let mut wal = path.as_os_str().to_os_string();
     wal.push("-wal");
-    let wal_modified = std::fs::metadata(Path::new(&wal))
+    PathBuf::from(wal)
+}
+
+fn database_modified(path: &Path) -> SystemTime {
+    let modified = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let wal_modified = std::fs::metadata(wal_path(path))
         .ok()
         .filter(|meta| meta.is_file() && meta.len() > 0)
         .and_then(|meta| meta.modified().ok());
@@ -223,6 +253,24 @@ mod tests {
         write_db(&stale_dir, &format!("{name}-shm"), 3_000);
         let live = write_db(&container_dir(home.path()), &name, 2_000);
         assert_eq!(discover_databases(home.path()), vec![live]);
+    }
+
+    #[test]
+    fn store_stamp_moves_on_wal_commits_but_not_on_shm_writes() {
+        let home = tempfile::tempdir().expect("temp home");
+        let dir = app_support_dir(home.path());
+        let name = db_name();
+        write_db(&dir, &name, 1_000);
+        let before = store_stamp(home.path());
+        assert_eq!(before, store_stamp(home.path()));
+
+        // A reader touching the shared-memory index is not new content.
+        write_db(&dir, &format!("{name}-shm"), 5_000);
+        assert_eq!(before, store_stamp(home.path()));
+
+        // A commit that only reaches the WAL is.
+        std::fs::write(dir.join(format!("{name}-wal")), b"frame").expect("write wal");
+        assert_ne!(before, store_stamp(home.path()));
     }
 
     #[test]

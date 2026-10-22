@@ -1,5 +1,5 @@
 use crate::cli::{Commands, PermissionsCommand, SearchCommand, SourceCommand, WatchOutputFormat};
-use crate::commands::source_adapter::adapter_for_source;
+use crate::commands::source_adapter::{adapter_for_source, WatchSourceReader};
 use crate::support::{dependency_status, print_payload};
 use anyhow::{Context, Result};
 use crossterm::{
@@ -809,6 +809,8 @@ fn run_watch(
         eprintln!("lazykatok: starting terminal watch; press Ctrl-C to stop");
     }
 
+    let mut source_reader = WatchSourceReader::new(&source, path, data_dir);
+    let mut messages = Vec::new();
     let mut poll = 0u64;
     loop {
         poll += 1;
@@ -832,24 +834,31 @@ fn run_watch(
         } else if poll == 1 && !reply {
             eprintln!("lazykatok: reading source {source}...");
         }
-        // Build a fresh adapter each pass. The macOS adapter memoizes one read
-        // per instance, which is correct for `sync` but a watch loop must see
-        // source changes made after the previous poll.
-        let adapter = adapter_for_source(&source, path.clone(), data_dir)?;
-        let messages = adapter.messages().context("read source messages")?;
+        let fresh = source_reader
+            .read_if_changed()
+            .context("read source messages")?;
         let read_source = read_started.elapsed().as_millis();
-        if selected_chat_name.is_none() {
-            selected_chat_name = chat
-                .as_deref()
-                .and_then(|chat_id| find_chat_name(&messages, chat_id));
-        }
         let text_replay = format == WatchOutputFormat::Text && chat.is_some();
-        let events = snapshot.diff(
-            &messages,
-            poll,
-            replay_existing || text_replay,
-            chat.as_deref(),
-        );
+        let events = match fresh {
+            Some(fresh) => {
+                messages = fresh;
+                if selected_chat_name.is_none() {
+                    selected_chat_name = chat
+                        .as_deref()
+                        .and_then(|chat_id| find_chat_name(&messages, chat_id));
+                }
+                snapshot.diff(
+                    &messages,
+                    poll,
+                    replay_existing || text_replay,
+                    chat.as_deref(),
+                )
+            }
+            None => {
+                snapshot.unchanged();
+                Vec::new()
+            }
+        };
         let events = if format == WatchOutputFormat::Text && poll == 1 {
             tail_events(events, tail as usize)
         } else {
@@ -858,7 +867,7 @@ fn run_watch(
         let emitted_messages = events.len();
         let (archive_changed, archived_messages, chunks) = if snapshot.source_changed() {
             let report = sync_watch_messages(
-                &messages,
+                &snapshot.archive_batch(&messages),
                 read_source,
                 &source,
                 config,
@@ -1020,8 +1029,7 @@ fn run_watch_with_reply(
         chat_id: chat_id.clone(),
         selected_chat_name,
     };
-    let read_source_name = source.clone();
-    let read_data_dir = data_dir.to_path_buf();
+    let mut source_reader = WatchSourceReader::new(&source, path, data_dir);
     let sync_source_name = source.clone();
     let sync_config = config.clone();
     let sync_archive_path = archive_path.to_path_buf();
@@ -1033,11 +1041,7 @@ fn run_watch_with_reply(
             options,
             outcome_tx,
             stop_rx,
-            move || {
-                // A new adapter per pass is required because the macOS adapter memoizes its read.
-                let adapter = adapter_for_source(&read_source_name, path.clone(), &read_data_dir)?;
-                Ok(adapter.messages()?)
-            },
+            move || source_reader.read_if_changed(),
             move |messages, read_source| {
                 let report = sync_watch_messages(
                     messages,
@@ -1089,21 +1093,22 @@ fn reply_poll_worker<ReadSource, SyncMessages, RecordFreshness>(
     mut sync_messages: SyncMessages,
     mut record_freshness: RecordFreshness,
 ) where
-    ReadSource: FnMut() -> Result<Vec<RawMessage>> + Send,
+    ReadSource: FnMut() -> Result<Option<Vec<RawMessage>>> + Send,
     SyncMessages: FnMut(&[RawMessage], u128) -> Result<PollArchiveState> + Send,
     RecordFreshness: FnMut(usize, usize) -> Result<()> + Send,
 {
     let mut snapshot = WatchSnapshot::default();
     let mut archive_counts = None;
     let mut selected_chat_name = options.selected_chat_name;
+    let mut messages = Vec::new();
     let mut poll = 0u64;
 
     loop {
         poll += 1;
         let poll_started = Instant::now();
         let next_poll_at = poll_started + options.poll_interval;
-        let messages = match read_source().context("read source messages") {
-            Ok(messages) => messages,
+        let fresh = match read_source().context("read source messages") {
+            Ok(fresh) => fresh,
             Err(error) => {
                 let _ = outcome_tx.send(ReplyPollOutcome::Error { poll, error });
                 return;
@@ -1116,18 +1121,27 @@ fn reply_poll_worker<ReadSource, SyncMessages, RecordFreshness>(
             return;
         }
         let read_source = poll_started.elapsed().as_millis();
-        if selected_chat_name.is_none() {
-            selected_chat_name = options
-                .chat_id
-                .as_deref()
-                .and_then(|chat_id| find_chat_name(&messages, chat_id));
-        }
-        let events = snapshot.diff(
-            &messages,
-            poll,
-            options.replay_existing || options.chat_id.is_some(),
-            options.chat_id.as_deref(),
-        );
+        let events = match fresh {
+            Some(fresh) => {
+                messages = fresh;
+                if selected_chat_name.is_none() {
+                    selected_chat_name = options
+                        .chat_id
+                        .as_deref()
+                        .and_then(|chat_id| find_chat_name(&messages, chat_id));
+                }
+                snapshot.diff(
+                    &messages,
+                    poll,
+                    options.replay_existing || options.chat_id.is_some(),
+                    options.chat_id.as_deref(),
+                )
+            }
+            None => {
+                snapshot.unchanged();
+                Vec::new()
+            }
+        };
         let events = if poll == 1 {
             tail_events(events, options.tail)
         } else {
@@ -1135,7 +1149,9 @@ fn reply_poll_worker<ReadSource, SyncMessages, RecordFreshness>(
         };
         let emitted_messages = events.len();
         let archive_state = if snapshot.source_changed() {
-            match sync_messages(&messages, read_source).context("sync watched messages") {
+            match sync_messages(&snapshot.archive_batch(&messages), read_source)
+                .context("sync watched messages")
+            {
                 Ok(state) => {
                     archive_counts = Some((state.archived_messages, state.chunks));
                     state
@@ -2327,7 +2343,7 @@ mod reply_terminal_tests {
                 move || {
                     entered_tx.send(()).expect("signal entered read");
                     release_rx.recv().expect("release fake read");
-                    Ok(vec![synthetic_message()])
+                    Ok(Some(vec![synthetic_message()]))
                 },
                 |_, _| {
                     Ok(PollArchiveState {
@@ -2397,6 +2413,51 @@ mod reply_terminal_tests {
             .iter()
             .any(|row| row.text.contains("synthetic read failure")));
         worker.join().expect("join fake worker");
+    }
+
+    #[test]
+    fn reply_worker_skips_diff_and_sync_while_the_source_is_unchanged() {
+        let (outcome_tx, outcome_rx) = mpsc::channel();
+        let (_stop_tx, stop_rx) = mpsc::channel();
+        let (synced_tx, synced_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut reads: Vec<anyhow::Result<Option<Vec<RawMessage>>>> =
+                vec![Ok(None), Ok(Some(vec![synthetic_message()]))];
+            reply_poll_worker(
+                ReplyPollWorkerOptions {
+                    poll_interval: Duration::ZERO,
+                    max_polls: Some(2),
+                    ..worker_options()
+                },
+                outcome_tx,
+                stop_rx,
+                move || reads.pop().expect("one read per poll"),
+                move |messages, _| {
+                    synced_tx.send(messages.len()).expect("record sync");
+                    Ok(PollArchiveState {
+                        archive_changed: true,
+                        archived_messages: 1,
+                        chunks: 1,
+                    })
+                },
+                |_, _| Ok(()),
+            );
+        });
+        worker.join().expect("join fake worker");
+
+        let outcomes: Vec<_> = outcome_rx.try_iter().collect();
+        assert_eq!(outcomes.len(), 2);
+        assert!(matches!(
+            &outcomes[1],
+            ReplyPollOutcome::Completed {
+                poll: 2,
+                events,
+                archive_changed: false,
+                observed_messages: 1,
+                ..
+            } if events.is_empty()
+        ));
+        assert_eq!(synced_rx.try_iter().collect::<Vec<_>>(), vec![1]);
     }
 
     #[test]

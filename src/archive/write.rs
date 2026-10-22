@@ -421,8 +421,13 @@ impl Archive {
     fn update_cursor(&self, source_id: &str, newest: &DateTime<Utc>) -> Result<()> {
         self.conn
             .execute(
-                "INSERT OR REPLACE INTO sync_cursors(source_id, cursor_value)
-             VALUES (?1, ?2)",
+                // Never move backwards: a watch sync passes only the messages that
+                // changed, and an edit to an old message must not rewind the cursor.
+                // Every value is a UTC RFC 3339 string, so text order is time order.
+                "INSERT INTO sync_cursors(source_id, cursor_value)
+             VALUES (?1, ?2)
+             ON CONFLICT(source_id)
+             DO UPDATE SET cursor_value = MAX(cursor_value, excluded.cursor_value)",
                 params![source_id, newest.to_rfc3339()],
             )
             .map_err(Error::Sql)?;

@@ -45,8 +45,34 @@ fn reverse_ascii(input: &str) -> String {
     input.chars().rev().collect()
 }
 
+type LastDerived = std::sync::Mutex<Option<(i64, String, String)>>;
+
+/// Each derivation is 100k PBKDF2 rounds, and a watch poll asks for the same
+/// `(user_id, uuid)` several times, so remember the most recent result.
+fn remember_last(
+    last: &LastDerived,
+    user_id: i64,
+    uuid: &str,
+    derive: impl FnOnce() -> String,
+) -> String {
+    let mut last = last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((id, cached_uuid, value)) = last.as_ref() {
+        if *id == user_id && cached_uuid == uuid {
+            return value.clone();
+        }
+    }
+    let value = derive();
+    *last = Some((user_id, uuid.to_string(), value.clone()));
+    value
+}
+
 /// The 256-lowercase-hex SQLCipher passphrase for `(user_id, uuid)`.
 pub fn secure_key(user_id: i64, uuid: &str) -> String {
+    static LAST: LastDerived = std::sync::Mutex::new(None);
+    remember_last(&LAST, user_id, uuid, || derive_secure_key(user_id, uuid))
+}
+
+fn derive_secure_key(user_id: i64, uuid: &str) -> String {
     let hashed = hashed_device_uuid(uuid);
     let parts = [
         "A",
@@ -69,6 +95,11 @@ pub fn secure_key(user_id: i64, uuid: &str) -> String {
 
 /// The 78-hex DB filename for `(user_id, uuid)`.
 pub fn database_name(user_id: i64, uuid: &str) -> String {
+    static LAST: LastDerived = std::sync::Mutex::new(None);
+    remember_last(&LAST, user_id, uuid, || derive_database_name(user_id, uuid))
+}
+
+fn derive_database_name(user_id: i64, uuid: &str) -> String {
     let reversed_uuid = reverse_ascii(uuid);
     let parts = [
         ".",
@@ -111,6 +142,20 @@ mod tests {
         assert!(key
             .chars()
             .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+    }
+
+    #[test]
+    fn remember_last_derives_once_per_identity() {
+        let last = LastDerived::new(None);
+        let first = remember_last(&last, 1, SYNTHETIC_UUID, || "one".to_string());
+        let again = remember_last(&last, 1, SYNTHETIC_UUID, || {
+            panic!("the same identity must not be derived twice in a row")
+        });
+        let other = remember_last(&last, 2, SYNTHETIC_UUID, || "two".to_string());
+        assert_eq!(
+            (first.as_str(), again.as_str(), other.as_str()),
+            ("one", "one", "two")
+        );
     }
 
     #[test]
