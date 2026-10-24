@@ -1,7 +1,7 @@
 # lazykatok
 
 로컬 우선(local-first) 카카오톡 터미널 클라이언트. 방 목록을 최신순으로 골라 들어가는
-실시간 대화 TUI, 로컬 암호화 아카이브, 키워드·BM25·의미 검색을 하나의 CLI로 제공합니다.
+실시간 대화 TUI, 로컬 아카이브, 키워드·BM25·의미 검색을 하나의 CLI로 제공합니다.
 Apple Silicon macOS 전용.
 
 [![CI](https://github.com/changeroa/lazykatok/actions/workflows/ci.yml/badge.svg)](https://github.com/changeroa/lazykatok/actions/workflows/ci.yml)
@@ -15,7 +15,8 @@ Apple Silicon macOS 전용.
 - **답장 전송** — TUI에서 Enter로 카카오톡 앱에 실제 전송(macOS Accessibility 경로).
   전송 중에도 입력 가능하고, 동시 전송은 안전을 위해 하나로 직렬화됩니다.
 - **로컬 검색** — 키워드 / BM25 / 임베딩 의미 검색. 대화 데이터는 전부 로컬
-  SQLCipher 아카이브에 저장되고 네트워크로 나가지 않습니다.
+  SQLite 아카이브에 저장되고, 외부 임베딩 엔드포인트를 직접 지정하지 않는 한
+  네트워크로 나가지 않습니다.
 
 ## 요구 사항
 
@@ -124,7 +125,10 @@ URL은 `/embeddings`로 끝나면 그대로, `/v1`로 끝나면 `/embeddings`를
 ## 프라이버시
 
 - 모든 대화 데이터는 로컬(`~/Library/Application Support/katok` — 이전 이름의
-  디렉터리를 그대로 사용) SQLCipher 암호화 아카이브에 저장됩니다.
+  디렉터리를 그대로 사용) 아카이브 `archive.sqlite3`에 저장됩니다. 아카이브는
+  암호화되지 않은 SQLite 파일입니다. 데이터 디렉터리는 소유자 전용(0700), 아카이브와
+  복호화한 미디어 파일은 소유자 전용(0600) 권한으로 만들어집니다. 디스크 암호화
+  (FileVault)를 켜 두세요.
 - 텔레메트리가 없습니다. 의미 검색의 임베딩은 기본적으로 로컬 모델로
   계산됩니다. `KATOK_EMBED_URL`(또는 설정 파일의 `embedder_url`)로 OpenAI 호환
   엔드포인트를 직접 지정한 경우에만 인덱싱할 문단과 검색어가 그 엔드포인트로
