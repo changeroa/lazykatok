@@ -25,6 +25,14 @@ impl Archive {
             crate::paths::ensure_private_dir(parent)?;
         }
         let conn = Connection::open(path).map_err(Error::Sql)?;
+        // Every message body lives in this file unencrypted, so it gets the same owner-only mode
+        // as the vector store. SQLite gives its journal files the mode of the main file.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(Error::Io)?;
+        }
         let archive = Self { conn };
         schema::migrate(&archive.conn)?;
         Ok(archive)
@@ -53,5 +61,45 @@ impl Archive {
         let value = work()?;
         tx.commit().map_err(|err| E::from(Error::Sql(err)))?;
         Ok(value)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::Archive;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(path: &std::path::Path) -> u32 {
+        std::fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    #[test]
+    fn archive_file_is_owner_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let fresh = dir.path().join("fresh").join("archive.sqlite3");
+        Archive::open(&fresh).expect("open fresh archive");
+        assert_eq!(
+            mode(&fresh),
+            0o600,
+            "a new archive must not be group/world readable"
+        );
+
+        // An archive written by an earlier version keeps the mode it was created with.
+        let existing = dir.path().join("existing").join("archive.sqlite3");
+        std::fs::create_dir_all(existing.parent().expect("parent")).expect("dir");
+        std::fs::write(&existing, b"").expect("seed empty archive");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod 0644");
+        Archive::open(&existing).expect("open existing archive");
+        assert_eq!(
+            mode(&existing),
+            0o600,
+            "opening must tighten an older archive"
+        );
     }
 }
