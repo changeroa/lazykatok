@@ -634,7 +634,16 @@ fn write_image(body: &[u8], out: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = tmp_path(out);
-    std::fs::write(&tmp, body)?;
+    // The body is decrypted message content: create it owner-only, never through a file that
+    // already exists at the temporary name.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    std::io::Write::write_all(&mut options.open(&tmp)?, body)?;
     std::fs::rename(&tmp, out).map_err(|err| {
         let _ = std::fs::remove_file(&tmp);
         Error::Io(err)
@@ -786,6 +795,38 @@ mod tests {
         assert_eq!(
             std::fs::read(record.path.as_ref().expect("path")).expect("image"),
             bytes_from_hex(VECTOR_IMAGE_HEX)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn decrypted_media_is_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (tmp, dirs, options) = fixture();
+        let input = frame();
+        write_cached_media(
+            tmp.path(),
+            &input.full_stem,
+            ".img",
+            &bytes_from_hex(PYTHON_REFERENCE_PKV2_HEX),
+        );
+
+        let report =
+            resolve_media_frames_with_fetcher(CHAT_ID, &[input], &dirs, &options, |_, _, _| {
+                panic!("cdn should not be called when full cache exists")
+            })
+            .expect("resolve");
+
+        let path = report.records[0].path.as_ref().expect("path");
+        let mode = std::fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "decrypted media must not be group/world readable"
         );
     }
 
