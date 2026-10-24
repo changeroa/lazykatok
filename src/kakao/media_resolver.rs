@@ -237,9 +237,13 @@ where
 /// The cap has to be passed explicitly: `Body::read_to_vec()` applies its own
 /// 10 MB default, which silently turned every video and file larger than that
 /// into a `cdn-failed` record even though the URL was perfectly good.
+///
+/// HTTPS only, redirects included: the URL comes from an attachment anyone can
+/// send, its query carries the signature, and the body is private media.
 pub fn cdn_fetch(url: &str, timeout: Duration, max_bytes: u64) -> Result<Vec<u8>> {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
+        .https_only(true)
         .build();
     let agent: ureq::Agent = config.into();
     let mut response = agent
@@ -634,7 +638,16 @@ fn write_image(body: &[u8], out: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = tmp_path(out);
-    std::fs::write(&tmp, body)?;
+    // The body is decrypted message content: create it owner-only, never through a file that
+    // already exists at the temporary name.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    std::io::Write::write_all(&mut options.open(&tmp)?, body)?;
     std::fs::rename(&tmp, out).map_err(|err| {
         let _ = std::fs::remove_file(&tmp);
         Error::Io(err)
@@ -787,6 +800,81 @@ mod tests {
             std::fs::read(record.path.as_ref().expect("path")).expect("image"),
             bytes_from_hex(VECTOR_IMAGE_HEX)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn decrypted_media_is_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (tmp, dirs, options) = fixture();
+        let input = frame();
+        write_cached_media(
+            tmp.path(),
+            &input.full_stem,
+            ".img",
+            &bytes_from_hex(PYTHON_REFERENCE_PKV2_HEX),
+        );
+
+        let report =
+            resolve_media_frames_with_fetcher(CHAT_ID, &[input], &dirs, &options, |_, _, _| {
+                panic!("cdn should not be called when full cache exists")
+            })
+            .expect("resolve");
+
+        let path = report.records[0].path.as_ref().expect("path");
+        let mode = std::fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "decrypted media must not be group/world readable"
+        );
+    }
+
+    #[test]
+    fn cdn_fetch_refuses_plain_http_without_connecting() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let url = format!(
+            "http://{}/image?expires=1900000000&signature=synthetic",
+            listener.local_addr().expect("addr")
+        );
+        listener.set_nonblocking(true).expect("nonblocking");
+        let body = bytes_from_hex(VECTOR_IMAGE_HEX);
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).expect("blocking stream");
+                        let mut request = [0_u8; 1024];
+                        let _ = stream.read(&mut request);
+                        let head = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = stream.write_all(head.as_bytes());
+                        let _ = stream.write_all(&body);
+                        return true;
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(err) => panic!("accept failed: {err}"),
+                }
+            }
+            false
+        });
+
+        let result = cdn_fetch(&url, Duration::from_secs(5), 1 << 20);
+        let connected = server.join().expect("server thread");
+
+        assert!(result.is_err(), "a plain-http CDN link must not be fetched");
+        assert!(!connected, "the signed URL must not be sent in cleartext");
     }
 
     #[test]
