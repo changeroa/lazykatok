@@ -2678,12 +2678,15 @@ fn macos_probe_payload(enabled: bool, data_dir: &Path) -> serde_json::Value {
     match dirs::home_dir() {
         Some(home) => {
             let status = lazykatok::kakao::probe_status(&home, data_dir);
+            let session = lazykatok::kakao::session::probe(&home);
             serde_json::json!({
                 "status": "checked",
                 "app_installed": status.app_installed,
                 "container_present": status.container_present,
                 "db_file_count": status.db_file_count,
-                "auth_cached": status.auth_cached
+                "auth_cached": status.auth_cached,
+                "app_session": session,
+                "warning": session.warning()
             })
         }
         None => serde_json::json!({ "status": "home_unavailable" }),
@@ -2703,6 +2706,16 @@ fn run_sync(
     data_dir: &Path,
 ) -> Result<()> {
     let adapter = adapter_for_source(source, path, data_dir)?;
+    let app_session = if matches!(source, "macos" | "kakao") {
+        let home = lazykatok::kakao::default_home().context("resolve home directory")?;
+        let session = lazykatok::kakao::session::probe(&home);
+        if let Some(warning) = session.warning() {
+            eprintln!("{warning}");
+        }
+        Some(session)
+    } else {
+        None
+    };
     let read_started = Instant::now();
     let messages = adapter.messages().context("read source messages")?;
     let read_source = read_started.elapsed().as_millis();
@@ -2801,8 +2814,19 @@ fn run_sync(
     report.include_touched = include_touched;
     freshness::record_sync(data_dir, source, report.total_messages, report.chunks)?;
 
+    // A Value reorders keys, so the plain report keeps its byte-identical struct order.
+    if app_session.is_none() && !prune_preview && !prune_deleted {
+        return print_payload(json, &report);
+    }
+    let mut payload = serde_json::to_value(&report).context("serialize sync report")?;
+    if let (Some(session), Some(map)) = (app_session, payload.as_object_mut()) {
+        map.insert("app_session".to_string(), serde_json::to_value(session)?);
+        map.insert(
+            "warning".to_string(),
+            serde_json::to_value(session.warning())?,
+        );
+    }
     if prune_preview || prune_deleted {
-        let mut payload = serde_json::to_value(&report).context("serialize sync report")?;
         if let Some(map) = payload.as_object_mut() {
             map.insert(
                 if prune_deleted {
@@ -2813,9 +2837,8 @@ fn run_sync(
                 serde_json::to_value(&pruned).context("serialize pruned")?,
             );
         }
-        return print_payload(json, &payload);
     }
-    print_payload(json, &report)
+    print_payload(json, &payload)
 }
 
 fn run_transcript(
