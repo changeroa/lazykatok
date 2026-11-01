@@ -18,6 +18,7 @@ pub mod media_resolver;
 pub mod reader;
 #[cfg(all(target_os = "macos", feature = "private-send"))]
 pub mod send_curtain;
+pub mod session;
 pub mod store;
 
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ use crate::{Error, Result};
 pub use auth::{probe_status, AuthOptions, ProbeStatus, ResolvedAuth};
 pub use media_reader::{read_media_frames_with_options, MediaQuery};
 pub use reader::{ChatRecord, ReaderOutput};
+pub use session::AppSession;
 
 /// Resolve auth and read every openable KakaoTalk database for `home`/`data_dir`.
 pub fn read_kakao(home: PathBuf, data_dir: PathBuf) -> Result<ReaderOutput> {

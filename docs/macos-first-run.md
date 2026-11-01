@@ -56,10 +56,14 @@ Apple TCC 권한 시스템은 전체 디스크 접근 권한과 손쉬운 사용
       "status": "checked",
       "app_installed": true,
       "container_present": true,
-      "db_file_count": 1
+      "db_file_count": 1,
+      "app_session": "store_open",
+      "warning": null
     }
   }
 }
 ```
 
 정확한 `db_file_count`는 카카오톡 계정 상태와 로컬 동기화 상태에 따라 달라질 수 있습니다.
+
+`app_session`은 실행 중인 카카오톡이 메시지 DB를 열고 있는지 보여 줍니다. `store_open`이면 정상입니다. `store_closed`이면 카카오톡이 로그인 창에 머물러 있는 등 로그아웃 상태일 가능성이 높습니다. 이때는 `sync`가 새 메시지를 가져오지 못하고 같은 경고를 stderr에 출력하니, 카카오톡에 다시 로그인하세요. `not_running`은 카카오톡이 꺼진 상태이고, `unknown`은 열린 파일 목록을 읽지 못한 경우입니다.

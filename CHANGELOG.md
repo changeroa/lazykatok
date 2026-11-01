@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### macOS source
+
+- `lazykatok doctor --macos-probe --json` now reports `app_session`
+  (`not_running`, `store_open`, `store_closed`, `unknown`) and a `warning`.
+  `store_closed` means KakaoTalk is running but has no message database open,
+  which is what a signed-out app at its login window looks like. Every older
+  check passed in that state while the archive silently stopped growing.
+  `sync --source macos` prints the same warning to stderr. Only process
+  open-file paths are compared; no path, filename, or content is emitted.
+
 ## 0.3.3
 
 ### Semantic search

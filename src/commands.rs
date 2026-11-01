@@ -2678,12 +2678,15 @@ fn macos_probe_payload(enabled: bool, data_dir: &Path) -> serde_json::Value {
     match dirs::home_dir() {
         Some(home) => {
             let status = lazykatok::kakao::probe_status(&home, data_dir);
+            let session = lazykatok::kakao::session::probe(&home);
             serde_json::json!({
                 "status": "checked",
                 "app_installed": status.app_installed,
                 "container_present": status.container_present,
                 "db_file_count": status.db_file_count,
-                "auth_cached": status.auth_cached
+                "auth_cached": status.auth_cached,
+                "app_session": session,
+                "warning": session.warning()
             })
         }
         None => serde_json::json!({ "status": "home_unavailable" }),
@@ -2703,6 +2706,12 @@ fn run_sync(
     data_dir: &Path,
 ) -> Result<()> {
     let adapter = adapter_for_source(source, path, data_dir)?;
+    if matches!(source, "macos" | "kakao") {
+        let home = lazykatok::kakao::default_home().context("resolve home directory")?;
+        if let Some(warning) = lazykatok::kakao::session::probe(&home).warning() {
+            eprintln!("{warning}");
+        }
+    }
     let read_started = Instant::now();
     let messages = adapter.messages().context("read source messages")?;
     let read_source = read_started.elapsed().as_millis();
