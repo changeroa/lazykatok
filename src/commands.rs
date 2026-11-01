@@ -2814,6 +2814,10 @@ fn run_sync(
     report.include_touched = include_touched;
     freshness::record_sync(data_dir, source, report.total_messages, report.chunks)?;
 
+    // A Value reorders keys, so the plain report keeps its byte-identical struct order.
+    if app_session.is_none() && !prune_preview && !prune_deleted {
+        return print_payload(json, &report);
+    }
     let mut payload = serde_json::to_value(&report).context("serialize sync report")?;
     if let (Some(session), Some(map)) = (app_session, payload.as_object_mut()) {
         map.insert("app_session".to_string(), serde_json::to_value(session)?);
