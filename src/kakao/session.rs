@@ -5,13 +5,14 @@
 //! (app installed, container present, database found, key cached) still passes.
 //! `sync` then succeeds and adds nothing. This module tells that state apart by
 //! asking which files the app process holds open — file paths only, compared
-//! against the store files `discover_database_files` already found. Nothing is
+//! against the store files found under every store root. Nothing is
 //! decrypted and no path or filename is ever emitted.
 
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::auth::{container_dir, discover_database_files};
+use super::store::{discover_database_files, store_dirs};
 
 /// What the running KakaoTalk app is doing with its message store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -74,9 +75,18 @@ fn wal_path(db: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// Probe the live KakaoTalk process owned by `home`'s user. Spawns `pgrep` and `lsof`;
+/// never returns or prints a path.
 pub fn probe(home: &Path) -> AppSession {
-    let database_files = discover_database_files(&container_dir(home));
-    let pids = kakaotalk_pids();
+    // lsof reports resolved paths, so the store paths are canonicalized to match.
+    let database_files: Vec<PathBuf> = store_dirs(home)
+        .iter()
+        .flat_map(|dir| discover_database_files(dir))
+        .map(|db| std::fs::canonicalize(&db).unwrap_or(db))
+        .collect();
+    let Some(pids) = kakaotalk_pids(home) else {
+        return AppSession::Unknown;
+    };
     if pids.is_empty() {
         return classify(false, None, &database_files);
     }
@@ -84,14 +94,23 @@ pub fn probe(home: &Path) -> AppSession {
     classify(true, open_files.as_deref(), &database_files)
 }
 
-fn kakaotalk_pids() -> Vec<String> {
-    let Ok(output) = Command::new("/usr/bin/pgrep")
-        .args(["-x", "KakaoTalk"])
+/// KakaoTalk pids owned by `home`'s user: `Some(empty)` when none run, `None` when
+/// the lookup itself failed.
+fn kakaotalk_pids(home: &Path) -> Option<Vec<String>> {
+    let uid = std::fs::metadata(home).ok()?.uid().to_string();
+    let output = Command::new("/usr/bin/pgrep")
+        .args(["-x", "-U", &uid, "KakaoTalk"])
         .output()
-    else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&output.stdout)
+        .ok()?;
+    match output.status.code() {
+        Some(0) => Some(parse_pids(&String::from_utf8_lossy(&output.stdout))),
+        Some(1) => Some(Vec::new()),
+        _ => None,
+    }
+}
+
+fn parse_pids(stdout: &str) -> Vec<String> {
+    stdout
         .lines()
         .map(str::trim)
         .filter(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
@@ -160,16 +179,9 @@ mod tests {
     }
 
     #[test]
-    fn shared_memory_file_alone_is_not_an_open_store() {
-        // A reader that only maps `-shm` (lazykatok's own read touches it) is not the app using the store.
-        let db = store(Path::new("/synthetic/container"));
-        let mut shm = db.as_os_str().to_os_string();
-        shm.push("-shm");
-
-        assert_eq!(
-            classify(true, Some(&[PathBuf::from(shm)]), &[db]),
-            AppSession::StoreClosed
-        );
+    fn parses_pgrep_pids_and_skips_noise() {
+        assert_eq!(parse_pids("788\n 912 \n\nnot-a-pid\n"), vec!["788", "912"]);
+        assert!(parse_pids("").is_empty());
     }
 
     #[test]

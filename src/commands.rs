@@ -2706,12 +2706,16 @@ fn run_sync(
     data_dir: &Path,
 ) -> Result<()> {
     let adapter = adapter_for_source(source, path, data_dir)?;
-    if matches!(source, "macos" | "kakao") {
+    let app_session = if matches!(source, "macos" | "kakao") {
         let home = lazykatok::kakao::default_home().context("resolve home directory")?;
-        if let Some(warning) = lazykatok::kakao::session::probe(&home).warning() {
+        let session = lazykatok::kakao::session::probe(&home);
+        if let Some(warning) = session.warning() {
             eprintln!("{warning}");
         }
-    }
+        Some(session)
+    } else {
+        None
+    };
     let read_started = Instant::now();
     let messages = adapter.messages().context("read source messages")?;
     let read_source = read_started.elapsed().as_millis();
@@ -2810,8 +2814,15 @@ fn run_sync(
     report.include_touched = include_touched;
     freshness::record_sync(data_dir, source, report.total_messages, report.chunks)?;
 
+    let mut payload = serde_json::to_value(&report).context("serialize sync report")?;
+    if let (Some(session), Some(map)) = (app_session, payload.as_object_mut()) {
+        map.insert("app_session".to_string(), serde_json::to_value(session)?);
+        map.insert(
+            "warning".to_string(),
+            serde_json::to_value(session.warning())?,
+        );
+    }
     if prune_preview || prune_deleted {
-        let mut payload = serde_json::to_value(&report).context("serialize sync report")?;
         if let Some(map) = payload.as_object_mut() {
             map.insert(
                 if prune_deleted {
@@ -2822,9 +2833,8 @@ fn run_sync(
                 serde_json::to_value(&pruned).context("serialize pruned")?,
             );
         }
-        return print_payload(json, &payload);
     }
-    print_payload(json, &report)
+    print_payload(json, &payload)
 }
 
 fn run_transcript(
