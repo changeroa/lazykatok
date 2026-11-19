@@ -18,8 +18,8 @@ pub struct KatokConfig {
     pub vector_dimension: u16,
     pub snippet_length: usize,
     /// Embedder backend: `local` (fastembed), `mock`/`local-test` (deterministic),
-    /// or an OpenAI-compatible HTTP endpoint (`openai`, `openai-compatible`, `http`,
-    /// `loopback-http`).
+    /// `inl` (a discovered `im-not-llm` daemon), or an OpenAI-compatible HTTP
+    /// endpoint (`openai`, `openai-compatible`, `http`, `loopback-http`).
     pub embedder_provider: String,
     /// Base URL of the OpenAI-compatible embedding endpoint. `embedder_endpoint` is
     /// accepted as an alias so either spelling works in `katok.toml`.
@@ -94,7 +94,7 @@ impl KatokConfig {
             self.embedder_url = Some(url);
             // A URL selects the HTTP embedder unless the caller explicitly asked for a
             // non-network mode.
-            if !matches!(mode.as_deref(), Some("mock" | "local-test")) {
+            if !matches!(mode.as_deref(), Some("mock" | "local-test" | "inl")) {
                 self.embedder_provider = "openai-compatible".to_string();
             }
         }
@@ -119,11 +119,12 @@ impl KatokConfig {
     }
 
     /// Collapse the configured provider into the embedder family the indexer selects:
-    /// `local`, `mock`, or `openai-compatible`.
+    /// `local`, `mock`, `inl`, or `openai-compatible`.
     #[must_use]
     pub fn embedder_family(&self) -> &'static str {
         match self.embedder_provider.as_str() {
             "mock" | "local-test" => "mock",
+            "inl" => "inl",
             "openai" | "openai-compatible" | "http" | "loopback-http" => "openai-compatible",
             _ if self.embedder_url.is_some() => "openai-compatible",
             _ => "local",
@@ -227,6 +228,25 @@ mod tests {
                 "alias {alias}"
             );
         }
+    }
+
+    #[test]
+    fn inl_provider_maps_to_the_inl_family() {
+        let mut config = KatokConfig::default();
+        config.apply_env_lookup(lookup(&[("KATOK_EMBEDDER", "inl")]));
+        assert_eq!(config.embedder_provider, "inl");
+        assert_eq!(config.embedder_family(), "inl");
+    }
+
+    #[test]
+    fn embed_url_does_not_override_an_explicit_inl_provider() {
+        let mut config = KatokConfig::default();
+        config.apply_env_lookup(lookup(&[
+            ("KATOK_EMBEDDER", "inl"),
+            ("KATOK_EMBED_URL", "http://127.0.0.1:8080"),
+        ]));
+        assert_eq!(config.embedder_provider, "inl");
+        assert_eq!(config.embedder_family(), "inl");
     }
 
     #[test]

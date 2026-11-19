@@ -1922,9 +1922,11 @@ fn run_doctor(
 ) -> Result<()> {
     let macos_probe = macos_probe_payload(macos_probe_enabled, &data_dir);
     // `provider` names the backend the indexer will pick; the deterministic test
-    // embedders still resolve locally, so only the HTTP backend reports differently.
+    // embedders still resolve locally, so only the HTTP-backed providers report
+    // differently.
     let embedder_provider = match config.embedder_family() {
         "openai-compatible" => "openai-compatible",
+        "inl" => "inl",
         _ => "local",
     };
     let embedder_mode = config.embedder_provider.clone();

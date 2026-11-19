@@ -78,7 +78,7 @@ lazykatok transcript --chat <chat_id> --from 2026-08-01 --to 2026-08-31 --out ex
 | `KATOK_EMBED_MODEL` | 요청에 보낼 모델 이름 (`openai/<model>` ID로 기록) |
 | `KATOK_EMBED_DIM` | 벡터 차원 (예: `Qwen3-Embedding-0.6B`는 `1024`) |
 | `KATOK_EMBED_API_KEY` | 보낼 `Authorization: Bearer` 토큰 |
-| `KATOK_EMBEDDER` | 백엔드 선택: `local` · `mock` · `local-test` · `openai-compatible` · `http` |
+| `KATOK_EMBEDDER` | 백엔드 선택: `local` · `mock` · `local-test` · `openai-compatible` · `http` · `inl` |
 
 URL은 `/embeddings`로 끝나면 그대로, `/v1`로 끝나면 `/embeddings`를, 그 외에는
 `/v1/embeddings`를 붙여 호출합니다. 같은 설정을 `--config katok.toml`의
@@ -86,6 +86,16 @@ URL은 `/embeddings`로 끝나면 그대로, `/v1`로 끝나면 `/embeddings`를
 `embedder_api_key_env` · `query_prefix` · `passage_prefix`로도 지정할 수 있습니다.
 로컬 모델 캐시는 `KATOK_FASTEMBED_CACHE_DIR`, 없으면 플랫폼 캐시 디렉터리의
 `lazykatok/fastembed`를 사용합니다.
+
+`KATOK_EMBEDDER=inl`은 URL 없이 이 컴퓨터에서 실행 중인 `im-not-llm`(`inl`)
+데몬을 찾아 그 OpenAI 호환 라우트로 임베딩합니다. `$HOME/.cache/im-not-llm/serve`
+(`%LOCALAPPDATA%\im-not-llm\serve`)의 `host`/`port` 파일로 후보를 찾고
+`GET /health`가 `ok`인 dense/multimodal(text) 서버만 사용합니다. 기본적으로
+`google/embeddinggemma-2`(768차원)를 받아들이며, `KATOK_EMBED_MODEL`·
+`KATOK_EMBED_DIM`로 다른 dense 모델을 지정할 수 있습니다. 데몬을 자동으로 띄우지는
+않습니다 — 없으면 `inl serve --multimodal`로 시작하라는 오류가 납니다. 벡터는
+`inl/<model>` ID로 기록되므로 로컬 `embeddinggemma/local` 벡터와 섞이지 않고,
+백엔드를 바꾸면 다시 임베딩합니다.
 
 ## TUI 사용법
 
@@ -128,7 +138,8 @@ URL은 `/embeddings`로 끝나면 그대로, `/v1`로 끝나면 `/embeddings`를
 - 텔레메트리가 없습니다. 의미 검색의 임베딩은 기본적으로 로컬 모델로
   계산됩니다. `KATOK_EMBED_URL`(또는 설정 파일의 `embedder_url`)로 OpenAI 호환
   엔드포인트를 직접 지정한 경우에만 인덱싱할 문단과 검색어가 그 엔드포인트로
-  전송됩니다.
+  전송됩니다. `KATOK_EMBEDDER=inl`은 같은 컴퓨터의 `im-not-llm` 루프백 데몬으로만
+  보냅니다.
 - 이 저장소는 공개입니다. 실제 대화에서 유래한 어떤 값도 커밋되지 않으며,
   테스트는 합성 fixture만 사용합니다 (`scripts/verify_release_config.py`의
   프라이버시 오라클이 이를 계속 검사합니다).
