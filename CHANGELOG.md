@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Semantic search
+
+- Added an `inl` embedder provider. `KATOK_EMBEDDER=inl` discovers a running
+  `im-not-llm` daemon — reading `host`/`port` under `<cache root>/serve`, then
+  asking the server itself over loopback `GET /health` — and indexes and searches
+  through that daemon's OpenAI-compatible route. By default it accepts the
+  multimodal `google/embeddinggemma-2` (768 dimensions, text modality);
+  `KATOK_EMBED_MODEL`/`KATOK_EMBED_DIM` select another dense or multimodal model,
+  matched against the daemon's reported identity, never its directory name.
+  Vectors are recorded under an `inl/<model>` id, so they never mix with the local
+  `embeddinggemma/local` ONNX vectors and changing backends re-embeds. No daemon
+  is auto-started: a missing or mismatched one reports `inl serve --multimodal`.
+  `lazykatok doctor --json` reports `provider: inl`. The local `fastembed` default
+  is unchanged.
+
 ## 0.3.3
 
 ### Semantic search

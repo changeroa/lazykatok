@@ -7,6 +7,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::Duration};
 
+use super::inl;
+
 pub(crate) trait SemanticEmbedder {
     fn id(&self) -> &str;
     fn embed(&mut self, texts: &[String], batch_size: usize) -> Result<Vec<Vec<f32>>>;
@@ -26,6 +28,7 @@ pub(crate) fn create_embedder(config: &KatokConfig) -> Result<Box<dyn SemanticEm
             config.vector_dimension,
         )))),
         "openai-compatible" => Ok(Box::new(OpenAiCompatibleEmbedder::new(&config)?)),
+        "inl" => Ok(Box::new(OpenAiCompatibleEmbedder::for_inl(&config)?)),
         _ => Ok(Box::new(FastEmbedder::new(&config)?)),
     }
 }
@@ -98,6 +101,12 @@ impl SemanticEmbedder for FastEmbedder {
 /// TEI-via-openai, vLLM) that speak the same shape, including models whose
 /// dimension is not the built-in 768 — set `vector_dimension`/`KATOK_EMBED_DIM`
 /// to match (for example 1024 for `Qwen3-Embedding-0.6B`).
+///
+/// It also backs the `inl` provider, which discovers an `im-not-llm` daemon and
+/// embeds through that daemon's OpenAI route. The two differ in where the
+/// endpoint/model/dimension come from, in the vector id they record, and in
+/// whether `input_type` is sent: `inl` passes it so the daemon can tell a query
+/// from a passage, while the OpenAI API would reject the extra field.
 #[derive(Debug)]
 struct OpenAiCompatibleEmbedder {
     agent: ureq::Agent,
@@ -108,6 +117,7 @@ struct OpenAiCompatibleEmbedder {
     query_prefix: Option<String>,
     passage_prefix: Option<String>,
     id: String,
+    send_input_type: bool,
 }
 
 impl OpenAiCompatibleEmbedder {
@@ -123,27 +133,70 @@ impl OpenAiCompatibleEmbedder {
                 "embedding dimension must be nonzero".to_string(),
             ));
         }
+        Ok(Self::build(
+            url,
+            config.embedder_model.clone(),
+            dimension,
+            config,
+            format!("openai/{}", config.embedder_model),
+            false,
+        ))
+    }
+
+    /// The `inl` provider: discover the daemon, then embed through its OpenAI
+    /// route with the model and dimension the daemon itself reports.
+    fn for_inl(config: &KatokConfig) -> Result<Self> {
+        let health = inl::discover(&inl::serve_root(), config)?;
+        let base_url = health.base_url().ok_or_else(|| {
+            Error::Embedding(format!(
+                "inl daemon `{}` answered /health without a loopback endpoint",
+                health.model_id
+            ))
+        })?;
+        let id = format!("inl/{}", health.model_id);
+        Ok(Self::build(
+            &base_url,
+            health.model_id,
+            health.dimension,
+            config,
+            id,
+            true,
+        ))
+    }
+
+    fn build(
+        url: &str,
+        model: String,
+        dimension: usize,
+        config: &KatokConfig,
+        id: String,
+        send_input_type: bool,
+    ) -> Self {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(120)))
             .build()
             .into();
-        Ok(Self {
+        Self {
             agent,
             endpoint: resolve_embeddings_endpoint(url),
-            model: config.embedder_model.clone(),
+            model,
             dimension,
             api_key: config.embedder_api_key.clone(),
             query_prefix: config.query_prefix.clone(),
             passage_prefix: config.passage_prefix.clone(),
-            id: format!("openai/{}", config.embedder_model),
-        })
+            id,
+            send_input_type,
+        }
     }
 
+    /// `role` labels the side for the `inl` daemon: the `query`/`passage`
+    /// extension lets it prepend the model's own prompt when it is configured to.
     fn request(
         &self,
         texts: &[String],
         batch_size: usize,
         prefix: Option<&str>,
+        role: &str,
     ) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
@@ -158,13 +211,16 @@ impl OpenAiCompatibleEmbedder {
                     None => text.clone(),
                 })
                 .collect::<Vec<_>>();
-            vectors.extend(self.post_batch(&inputs)?);
+            vectors.extend(self.post_batch(&inputs, role)?);
         }
         Ok(vectors)
     }
 
-    fn post_batch(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>> {
-        let body = serde_json::json!({ "model": self.model, "input": inputs });
+    fn post_batch(&self, inputs: &[String], role: &str) -> Result<Vec<Vec<f32>>> {
+        let mut body = serde_json::json!({ "model": self.model, "input": inputs });
+        if self.send_input_type {
+            body["input_type"] = serde_json::Value::String(role.to_string());
+        }
         let mut request = self
             .agent
             .post(&self.endpoint)
@@ -218,11 +274,16 @@ impl SemanticEmbedder for OpenAiCompatibleEmbedder {
     }
 
     fn embed(&mut self, texts: &[String], batch_size: usize) -> Result<Vec<Vec<f32>>> {
-        self.request(texts, batch_size, self.passage_prefix.as_deref())
+        self.request(texts, batch_size, self.passage_prefix.as_deref(), "passage")
     }
 
     fn embed_query(&mut self, query: &str) -> Result<Vec<f32>> {
-        let vectors = self.request(&[query.trim().to_string()], 1, self.query_prefix.as_deref())?;
+        let vectors = self.request(
+            &[query.trim().to_string()],
+            1,
+            self.query_prefix.as_deref(),
+            "query",
+        )?;
         vectors
             .into_iter()
             .next()
