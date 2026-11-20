@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.4 - 2026-11-20
+
 ### Semantic search
 
 - Added an `inl` embedder provider. `KATOK_EMBEDDER=inl` discovers a running
@@ -65,7 +67,9 @@
   stay valid.
 - Rewrote the README for the lazykatok identity.
 
-## Unreleased (pre-rebrand)
+## Unreleased
+
+## 0.3.4 - 2026-11-20 (pre-rebrand)
 
 ### Reply TUI
 
