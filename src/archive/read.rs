@@ -327,7 +327,7 @@ impl Archive {
         Ok(rows)
     }
 
-    pub(super) fn parent_chunks(&self, chunk_id: &str) -> Result<Vec<String>> {
+    pub(crate) fn parent_chunks(&self, chunk_id: &str) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
             .prepare(

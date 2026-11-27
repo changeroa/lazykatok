@@ -3,6 +3,7 @@ pub mod archive;
 pub mod chunking;
 pub mod config;
 pub mod fixture;
+pub mod grep;
 pub mod hybrid;
 pub mod kakao;
 pub mod paths;
@@ -35,6 +36,8 @@ pub enum Error {
     EmptyChunk,
     #[error("empty query")]
     EmptyQuery,
+    #[error("invalid regex pattern: {0}")]
+    InvalidRegex(String),
     #[error("chunk not found: {0}")]
     MissingChunk(String),
     #[error("semantic index has never been synced")]
