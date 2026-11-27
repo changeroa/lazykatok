@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.5 - 2026-11-27
+
 ### Search
 
 - Added `lazykatok grep <pattern>` (and `lazykatok search grep <pattern>`) for
