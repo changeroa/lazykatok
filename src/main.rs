@@ -62,6 +62,7 @@ fn error_code(error: &anyhow::Error) -> &'static str {
         Some(lazykatok::Error::SemanticIndexStale(_)) => "semantic_index_stale",
         Some(lazykatok::Error::SemanticIndexBusy(_)) => "semantic_index_busy",
         Some(lazykatok::Error::EmptyQuery) => "empty_query",
+        Some(lazykatok::Error::InvalidRegex(_)) => "invalid_regex",
         Some(lazykatok::Error::Sql(_)) => "sqlite_error",
         _ => "command_failed",
     }

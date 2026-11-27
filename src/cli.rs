@@ -61,6 +61,43 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         command: SearchCommand,
     },
+    /// Exact substring or regex grep over synced archive chunks (no embeddings or FTS tokenization).
+    Grep {
+        /// Literal substring (with --literal) or regular expression to match per line.
+        pattern: String,
+        /// Treat pattern as a fixed literal string instead of a regular expression.
+        #[arg(short = 'F', long)]
+        literal: bool,
+        /// Match case-insensitively.
+        #[arg(short = 'i', long)]
+        ignore_case: bool,
+        /// Lines of context to include before and after each matching line within a chunk.
+        #[arg(short = 'C', long, default_value_t = 0, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(0..=10))]
+        context: usize,
+        /// Maximum number of matches to return.
+        #[arg(short = 'k', long, default_value_t = 50, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=10_000))]
+        limit: usize,
+        /// Maximum number of matches to return per chunk.
+        #[arg(long, default_value_t = 20, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=1_000))]
+        max_per_chunk: usize,
+        /// Restrict matches to one chat_id.
+        #[arg(long)]
+        chat: Option<String>,
+        /// Restrict matches to chats whose name contains this substring (case-insensitive).
+        #[arg(long)]
+        chat_name: Option<String>,
+        /// Restrict matches to chunks whose sender nickname contains this substring (case-insensitive).
+        #[arg(long)]
+        sender: Option<String>,
+        /// Only include chunks whose ended_at is at or after this RFC3339 timestamp.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only include chunks whose started_at is at or before this RFC3339 timestamp.
+        #[arg(long)]
+        until: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     Chunk {
         #[command(subcommand)]
         command: ChunkCommand,
@@ -299,6 +336,43 @@ pub(crate) enum SearchCommand {
         /// Maximum number of results to return.
         #[arg(long, default_value_t = 10, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100_000))]
         limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Exact substring or regex grep over synced archive chunks (no embeddings or FTS tokenization).
+    Grep {
+        /// Literal substring (with --literal) or regular expression to match per line.
+        pattern: String,
+        /// Treat pattern as a fixed literal string instead of a regular expression.
+        #[arg(short = 'F', long)]
+        literal: bool,
+        /// Match case-insensitively.
+        #[arg(short = 'i', long)]
+        ignore_case: bool,
+        /// Lines of context to include before and after each matching line within a chunk.
+        #[arg(short = 'C', long, default_value_t = 0, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(0..=10))]
+        context: usize,
+        /// Maximum number of matches to return.
+        #[arg(short = 'k', long, default_value_t = 50, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=10_000))]
+        limit: usize,
+        /// Maximum number of matches to return per chunk.
+        #[arg(long, default_value_t = 20, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=1_000))]
+        max_per_chunk: usize,
+        /// Restrict matches to one chat_id.
+        #[arg(long)]
+        chat: Option<String>,
+        /// Restrict matches to chats whose name contains this substring (case-insensitive).
+        #[arg(long)]
+        chat_name: Option<String>,
+        /// Restrict matches to chunks whose sender nickname contains this substring (case-insensitive).
+        #[arg(long)]
+        sender: Option<String>,
+        /// Only include chunks whose ended_at is at or after this RFC3339 timestamp.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only include chunks whose started_at is at or before this RFC3339 timestamp.
+        #[arg(long)]
+        until: Option<String>,
         #[arg(long)]
         json: bool,
     },

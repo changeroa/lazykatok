@@ -19,6 +19,7 @@ use lazykatok::{
         rebuild_chunks_for_chats, rebuild_chunks_with_settings, ChunkSettings, CHUNKER_VERSION,
     },
     config::KatokConfig,
+    grep::{grep_archive, GrepOptions},
     hybrid::hybrid_search_with_config,
     search::{bm25_search_with_snippet, keyword_search_with_snippet},
     semantic::semantic_search_live_with_config,
@@ -548,7 +549,8 @@ pub(crate) fn command_requests_json(command: &Commands) -> bool {
         | Commands::Index { json, .. }
         | Commands::WipeIndex { json, .. }
         | Commands::Chunks { json, .. }
-        | Commands::Transcript { json, .. } => *json,
+        | Commands::Transcript { json, .. }
+        | Commands::Grep { json, .. } => *json,
         Commands::Watch {
             select,
             format,
@@ -559,7 +561,8 @@ pub(crate) fn command_requests_json(command: &Commands) -> bool {
             SearchCommand::Keyword { json, .. }
             | SearchCommand::Bm25 { json, .. }
             | SearchCommand::Semantic { json, .. }
-            | SearchCommand::Hybrid { json, .. } => *json,
+            | SearchCommand::Hybrid { json, .. }
+            | SearchCommand::Grep { json, .. } => *json,
         },
         Commands::Chunk { command } => match command {
             crate::cli::ChunkCommand::Get { json, .. }
@@ -632,6 +635,36 @@ pub(crate) fn run(
             &data_dir,
         ),
         Commands::Search { command } => run_search(command, &config, &archive_path, &semantic_dir),
+        Commands::Grep {
+            pattern,
+            literal,
+            ignore_case,
+            context,
+            limit,
+            max_per_chunk,
+            chat,
+            chat_name,
+            sender,
+            since,
+            until,
+            json,
+        } => run_grep(
+            &pattern,
+            GrepOptions {
+                literal,
+                ignore_case,
+                context,
+                limit,
+                max_per_chunk,
+                chat,
+                chat_name,
+                sender,
+                since,
+                until,
+            },
+            json,
+            &archive_path,
+        ),
         Commands::Chunk { command } => chunk_commands::run(command, &archive_path),
         Commands::Source { command } => run_source(command, &config, &data_dir),
         Commands::Media { command } => media_commands::run(command, &data_dir),
@@ -2886,7 +2919,46 @@ fn run_search(
                 .context("hybrid search")?;
             print_payload(json, &hits)
         }
+        SearchCommand::Grep {
+            pattern,
+            literal,
+            ignore_case,
+            context,
+            limit,
+            max_per_chunk,
+            chat,
+            chat_name,
+            sender,
+            since,
+            until,
+            json,
+        } => {
+            let hits = grep_archive(
+                &archive,
+                &pattern,
+                &GrepOptions {
+                    literal,
+                    ignore_case,
+                    context,
+                    limit,
+                    max_per_chunk,
+                    chat,
+                    chat_name,
+                    sender,
+                    since,
+                    until,
+                },
+            )
+            .context("grep search")?;
+            print_payload(json, &hits)
+        }
     }
+}
+
+fn run_grep(pattern: &str, options: GrepOptions, json: bool, archive_path: &Path) -> Result<()> {
+    let archive = Archive::open(archive_path).context("open archive")?;
+    let hits = grep_archive(&archive, pattern, &options).context("grep search")?;
+    print_payload(json, &hits)
 }
 
 fn run_source(command: SourceCommand, config: &KatokConfig, data_dir: &Path) -> Result<()> {

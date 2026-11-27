@@ -31,6 +31,8 @@ katok wipe-index --yes                    # drops the local index
 katok source chats --source macos --json  # lists rooms with their chat ids
 katok search keyword "검색어" --json
 katok search bm25 "검색어" --json
+katok search grep "ERR_420[12]" --json           # exact literal (-F) or regex grep over synced archive
+katok grep "검색어" -F -i -C 1 --json            # top-level alias for search grep
 katok search semantic "지난 회의 보고서" --json
 katok search hybrid "지난 회의 보고서" --json   # BM25 + semantic, fused over parent windows
 katok chunk get <chunk-id> --json

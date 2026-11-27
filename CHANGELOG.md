@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Search
+
+- Added `lazykatok grep <pattern>` (and `lazykatok search grep <pattern>`) for
+  exact literal (`-F`/`--literal`) and regex line-level matching directly over
+  synced `chunks` in `archive.sqlite3`, without FTS tokenization or embedding
+  models. Supports `-i`/`--ignore-case`, `-C`/`--context`, `-k`/`--limit`,
+  `--max-per-chunk`, `--chat`, `--chat-name`, `--sender`, `--since`, and
+  `--until`.
+
 ## 0.3.4 - 2026-11-20
 
 ### Semantic search
